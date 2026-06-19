@@ -1,27 +1,33 @@
 # ====================== BEGIN NAV INDEX ======================
 # NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-#   L39    Write-UiLog
-#   L47    Test-ApiHealth
-#   L57    Resolve-ApiBase
-#   L103   Invoke-ApiJson
-#   L170   Normalize-ProtocolUrl
-#   L193   Test-DownloadUrl
-#   L204   Test-PullSourceUrl
-#   L213   Normalize-DownloadUrlInput
-#   L228   Get-OptionalPropValue
-#   L241   Get-InitialDownloadUrl
-#   L248   Get-DetectedSourceMode
-#   L479   Get-SelectedSourceMode
-#   L488   Get-EffectiveSourceMode
-#   L497   Resolve-SourceMode
-#   L513   Set-SourceModeVisual
-#   L527   Get-SelectedJobId
-#   L538   Set-UiState
-#   L634   Update-ActionButtons
-#   L685   Update-DownloadList
-#   L724   Get-SelectedJobIds
-#   L733   Refresh-SelectedJob
-#   L815   Refresh-SendJob
+#   L49    Format-Bytes
+#   L58    Format-Speed
+#   L66    Format-ETA
+#   L77    Get-StatusColor
+#   L92    Write-UiLog
+#   L100   Test-ApiHealth
+#   L110   Resolve-ApiBase
+#   L156   Invoke-ApiJson
+#   L223   Normalize-ProtocolUrl
+#   L246   Test-DownloadUrl
+#   L257   Test-PullSourceUrl
+#   L266   Normalize-DownloadUrlInput
+#   L281   Get-OptionalPropValue
+#   L294   Get-InitialDownloadUrl
+#   L301   Get-DetectedSourceMode
+#   L543   Get-SelectedSourceMode
+#   L552   Get-EffectiveSourceMode
+#   L561   Resolve-SourceMode
+#   L577   Set-SourceModeVisual
+#   L591   Get-SelectedJobId
+#   L602   Set-UiState
+#   L698   Update-ActionButtons
+#   L749   Update-DownloadList
+#   L790   Get-SelectedJobIds
+#   L799   Update-ChannelsList
+#   L836   Refresh-SelectedJob
+#   L903   Refresh-SendJob
+#   Anchors + drag-drop-to-send wired before $form.ShowDialog()
 # ======================= END NAV INDEX =======================
 
 param(
@@ -31,8 +37,61 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Best-effort per-process DPI awareness so the window renders crisp on hi-DPI
+# displays instead of being bitmap-stretched. Must run before any Form is created.
+try {
+    if (-not ([System.Management.Automation.PSTypeName]'MultiSendNative.Dpi').Type) {
+        Add-Type -Namespace MultiSendNative -Name Dpi -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool SetProcessDPIAware();
+'@
+    }
+    [void][MultiSendNative.Dpi]::SetProcessDPIAware()
+} catch {}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+function Format-Bytes {
+    param([double]$n)
+    if ($n -lt 1KB) { return ('{0:N0} B' -f $n) }
+    if ($n -lt 1MB) { return ('{0:N1} KB' -f ($n / 1KB)) }
+    if ($n -lt 1GB) { return ('{0:N1} MB' -f ($n / 1MB)) }
+    if ($n -lt 1TB) { return ('{0:N2} GB' -f ($n / 1GB)) }
+    return ('{0:N2} TB' -f ($n / 1TB))
+}
+
+function Format-Speed {
+    param([double]$mbps)
+    if ($mbps -le 0) { return '-' }
+    if ($mbps -lt 1) { return ('{0:N0} Kbps' -f ($mbps * 1000)) }
+    if ($mbps -ge 1000) { return ('{0:N2} Gbps' -f ($mbps / 1000)) }
+    return ('{0:N1} Mbps' -f $mbps)
+}
+
+function Format-ETA {
+    param([double]$bytesRemaining, [double]$mbps)
+    if ($mbps -le 0 -or $bytesRemaining -le 0) { return '-' }
+    $bytesPerSec = ($mbps * 1000000) / 8
+    if ($bytesPerSec -le 0) { return '-' }
+    $secs = [int][Math]::Ceiling($bytesRemaining / $bytesPerSec)
+    if ($secs -lt 60) { return ('{0}s' -f $secs) }
+    if ($secs -lt 3600) { return ('{0}m {1}s' -f [int][Math]::Floor($secs / 60), ($secs % 60)) }
+    return ('{0}h {1}m' -f [int][Math]::Floor($secs / 3600), [int][Math]::Floor(($secs % 3600) / 60))
+}
+
+function Get-StatusColor {
+    param([string]$Status)
+    switch ($Status) {
+        'done'      { return [System.Drawing.Color]::ForestGreen }
+        'running'   { return [System.Drawing.Color]::RoyalBlue }
+        'failed'    { return [System.Drawing.Color]::Firebrick }
+        'canceled'  { return [System.Drawing.Color]::DarkOrange }
+        'paused'    { return [System.Drawing.Color]::DarkOrange }
+        'starting'  { return [System.Drawing.Color]::DimGray }
+        default     { return [System.Drawing.SystemColors]::WindowText }
+    }
+}
 
 $uiLogDir = Join-Path $env:LOCALAPPDATA 'MultiSend\logs'
 $uiLogPath = Join-Path $uiLogDir 'download-ui.log'
@@ -277,8 +336,12 @@ try {
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'MultiSend Transfer Manager'
 $form.Width = 1060
-$form.Height = 680
+$form.Height = 780
 $form.StartPosition = 'CenterScreen'
+$form.MinimumSize = New-Object System.Drawing.Size(900, 640)
+$form.FormBorderStyle = 'Sizable'
+$form.MaximizeBox = $true
+$form.AllowDrop = $true
 
 $lblMode = New-Object System.Windows.Forms.Label
 $lblMode.Text = 'Tipo'
@@ -441,30 +504,37 @@ $form.Controls.Add($progress)
 
 $lblMetrics = New-Object System.Windows.Forms.Label
 $lblMetrics.Left = 15
-$lblMetrics.Top = 552
+$lblMetrics.Top = 506
 $lblMetrics.Width = 1010
-$lblMetrics.Height = 80
-$lblMetrics.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$lblMetrics.Height = 54
 $lblMetrics.Text = 'Aguardando transferência...'
 $form.Controls.Add($lblMetrics)
 
-$lblCable = New-Object System.Windows.Forms.Label
-$lblCable.Left = 15
-$lblCable.Top = 508
-$lblCable.Height = 18
-$lblCable.Width = 1010
-$lblCable.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$lblCable.Text = 'Cable: -'
-$form.Controls.Add($lblCable)
+$lblChannelsHdr = New-Object System.Windows.Forms.Label
+$lblChannelsHdr.Left = 15
+$lblChannelsHdr.Top = 566
+$lblChannelsHdr.Width = 300
+$lblChannelsHdr.Text = 'Canais ativos'
+$form.Controls.Add($lblChannelsHdr)
 
-$lblWifi = New-Object System.Windows.Forms.Label
-$lblWifi.Left = 15
-$lblWifi.Top = 530
-$lblWifi.Height = 18
-$lblWifi.Width = 1010
-$lblWifi.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$lblWifi.Text = 'Wi-Fi: -'
-$form.Controls.Add($lblWifi)
+$listChannels = New-Object System.Windows.Forms.ListView
+$listChannels.Left = 15
+$listChannels.Top = 586
+$listChannels.Width = 1010
+$listChannels.Height = 120
+$listChannels.View = 'Details'
+$listChannels.FullRowSelect = $true
+$listChannels.GridLines = $true
+$listChannels.HeaderStyle = 'Nonclickable'
+[void]$listChannels.Columns.Add('Canal', 150)
+[void]$listChannels.Columns.Add('Estado', 90)
+[void]$listChannels.Columns.Add('IP local', 140)
+[void]$listChannels.Columns.Add('Enviado', 110)
+[void]$listChannels.Columns.Add('Agora', 110)
+[void]$listChannels.Columns.Add('Média', 110)
+[void]$listChannels.Columns.Add('Falhas', 70)
+[void]$listChannels.Columns.Add('Último erro', 210)
+$form.Controls.Add($listChannels)
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
@@ -696,8 +766,10 @@ function Update-DownloadList {
             [void]$item.SubItems.Add([string]$job.status)
             [void]$item.SubItems.Add(('{0:N2}%' -f [double]$job.percent))
             [void]$item.SubItems.Add([string]$job.output_path)
-            [void]$item.SubItems.Add(('{0} / {1}' -f [int64]$job.bytes_done, [int64]$job.total_bytes))
+            [void]$item.SubItems.Add(('{0} / {1}' -f (Format-Bytes ([double]$job.bytes_done)), (Format-Bytes ([double]$job.total_bytes))))
             [void]$item.SubItems.Add([string]$job.manifest_path)
+            $item.UseItemStyleForSubItems = $false
+            $item.SubItems[1].ForeColor = Get-StatusColor ([string]$job.status)
             [void]$listDownloads.Items.Add($item)
         }
         $listDownloads.EndUpdate()
@@ -730,6 +802,43 @@ function Get-SelectedJobIds {
     return ,$ids
 }
 
+function Update-ChannelsList {
+    param($Channels)
+    $listChannels.BeginUpdate()
+    $listChannels.Items.Clear()
+    if ($Channels) {
+        foreach ($prop in $Channels.PSObject.Properties) {
+            $name = $prop.Name
+            $c = $prop.Value
+            if ($null -eq $c) { continue }
+            $ifn = [string](Get-OptionalPropValue -Obj $c -Name 'interface_name' -Default '')
+            $label = if (-not [string]::IsNullOrWhiteSpace($ifn)) { "$name ($ifn)" } else { $name }
+            $failures = [int64](Get-OptionalPropValue -Obj $c -Name 'failures' -Default 0)
+            $lastErr = [string](Get-OptionalPropValue -Obj $c -Name 'last_error' -Default '')
+            $item = New-Object System.Windows.Forms.ListViewItem($label)
+            [void]$item.SubItems.Add([string]$c.state)
+            [void]$item.SubItems.Add([string](Get-OptionalPropValue -Obj $c -Name 'local_ip' -Default '-'))
+            [void]$item.SubItems.Add((Format-Bytes ([double]$c.bytes_sent)))
+            [void]$item.SubItems.Add((Format-Speed ([double]$c.mbps_now)))
+            [void]$item.SubItems.Add((Format-Speed ([double]$c.mbps_avg)))
+            [void]$item.SubItems.Add([string]$failures)
+            [void]$item.SubItems.Add($lastErr)
+            if (-not [string]::IsNullOrWhiteSpace($lastErr) -or $failures -gt 0) {
+                $item.ForeColor = [System.Drawing.Color]::Firebrick
+            } elseif ([string]$c.state -match 'active|send|run') {
+                $item.ForeColor = [System.Drawing.Color]::RoyalBlue
+            }
+            [void]$listChannels.Items.Add($item)
+        }
+    }
+    if ($listChannels.Items.Count -eq 0) {
+        $empty = New-Object System.Windows.Forms.ListViewItem('-')
+        1..7 | ForEach-Object { [void]$empty.SubItems.Add('-') }
+        [void]$listChannels.Items.Add($empty)
+    }
+    $listChannels.EndUpdate()
+}
+
 function Refresh-SelectedJob {
     $id = Get-SelectedJobId
     if ([string]::IsNullOrWhiteSpace($id)) { return }
@@ -755,28 +864,13 @@ function Refresh-SelectedJob {
             if ($st.queue_depth.cable -ne $null) { $qCable = [int]$st.queue_depth.cable }
             if ($st.queue_depth.wifi -ne $null) { $qWifi = [int]$st.queue_depth.wifi }
         }
-        $lblMetrics.Text = "Percent: {0:N2}%`r`nBytes: {1} / {2}`r`nChunks: {3}/{4} failed={5} pending={6}`r`nVelocidade: avg {7:N2} Mbps`r`nPipeline: {8} | in_flight(cable={9},wifi={10}) | queue(cable={11},wifi={12})`r`nManifest: {13}" -f `
-            [double]$st.percent, [int64]$st.bytes_done, [int64]$st.total_bytes, [int64]$st.chunks_done, [int64]$st.chunks_total, [int64]$st.chunks_failed, [int64]$st.chunks_pending, [double]$st.mbps_avg, $pipelineMode, $inCable, $inWifi, $qCable, $qWifi, [string]$st.manifest_path
+        $bytesRemaining = [double]$st.total_bytes - [double]$st.bytes_done
+        $eta = Format-ETA $bytesRemaining ([double]$st.mbps_now)
+        $lblMetrics.Text = "{0:N2}%  |  {1} / {2}  |  agora {3}  ·  média {4}  |  ETA {5}`r`nChunks: {6}/{7}  falhos={8}  pendentes={9}`r`nPipeline: {10} | in_flight(cable={11},wifi={12}) queue(cable={13},wifi={14})`r`nManifest: {15}" -f `
+            [double]$st.percent, (Format-Bytes ([double]$st.bytes_done)), (Format-Bytes ([double]$st.total_bytes)), (Format-Speed ([double]$st.mbps_now)), (Format-Speed ([double]$st.mbps_avg)), $eta, `
+            [int64]$st.chunks_done, [int64]$st.chunks_total, [int64]$st.chunks_failed, [int64]$st.chunks_pending, $pipelineMode, $inCable, $inWifi, $qCable, $qWifi, [string]$st.manifest_path
 
-        if ($st.channels) {
-            if ($st.channels.cable) {
-                $c = $st.channels.cable
-                $cLocalIp = Get-OptionalPropValue -Obj $c -Name 'local_ip' -Default ''
-                $lblCable.Text = "Cable: $($c.state) | $('{0:N1}' -f ($c.bytes_sent / 1MB)) MB | avg $('{0:N2}' -f $c.mbps_avg) Mbps | now $('{0:N2}' -f $c.mbps_now) Mbps | $cLocalIp"
-            } else {
-                $lblCable.Text = "Cable: -"
-            }
-            if ($st.channels.wifi) {
-                $w = $st.channels.wifi
-                $wLocalIp = Get-OptionalPropValue -Obj $w -Name 'local_ip' -Default ''
-                $lblWifi.Text = "Wi-Fi: $($w.state) | $('{0:N1}' -f ($w.bytes_sent / 1MB)) MB | avg $('{0:N2}' -f $w.mbps_avg) Mbps | now $('{0:N2}' -f $w.mbps_now) Mbps | $wLocalIp"
-            } else {
-                $lblWifi.Text = "Wi-Fi: -"
-            }
-        } else {
-            $lblCable.Text = "Cable: -"
-            $lblWifi.Text = "Wi-Fi: -"
-        }
+        Update-ChannelsList $st.channels
 
         if ($st.status -eq 'done') {
             $timer.Stop()
@@ -823,8 +917,11 @@ function Refresh-SendJob {
         $fp = Get-OptionalPropValue -Obj $st -Name 'file_path' -Default '-'
         $lblFile.Text = "Arquivo: $fp"
         $script:finalOutput = $fp
-        $lblMetrics.Text = "Percent: {0:N2}%`r`nBytes: {1} / {2}`r`nChunks: {3}/{4} failed={5} pending={6}`r`nVelocidade: avg {7:N2} Mbps" -f `
-            [double]$st.percent, [int64]$st.bytes_sent, [int64]$st.total_bytes, [int64]$st.chunks_done, [int64]$st.chunks_total, [int64]$st.chunks_failed, [int64]$st.chunks_pending, [double]$st.mbps_avg
+        $bytesRemaining = [double]$st.total_bytes - [double]$st.bytes_sent
+        $eta = Format-ETA $bytesRemaining ([double]$st.mbps_now)
+        $lblMetrics.Text = "{0:N2}%  |  {1} / {2}  |  agora {3}  ·  média {4}  |  ETA {5}`r`nChunks: {6}/{7}  falhos={8}  pendentes={9}" -f `
+            [double]$st.percent, (Format-Bytes ([double]$st.bytes_sent)), (Format-Bytes ([double]$st.total_bytes)), (Format-Speed ([double]$st.mbps_now)), (Format-Speed ([double]$st.mbps_avg)), $eta, `
+            [int64]$st.chunks_done, [int64]$st.chunks_total, [int64]$st.chunks_failed, [int64]$st.chunks_pending
 
         if ($listDownloads.Items.Count -gt 0) {
             $itm = $listDownloads.Items[0]
@@ -836,18 +933,7 @@ function Refresh-SendJob {
             }
         }
 
-        if ($st.channels) {
-            if ($st.channels.cable) {
-                $c = $st.channels.cable
-                $cLocalIp = Get-OptionalPropValue -Obj $c -Name 'local_ip' -Default ''
-                $lblCable.Text = "Cable: $($c.state) | $('{0:N1}' -f ($c.bytes_sent / 1MB)) MB | avg $('{0:N2}' -f $c.mbps_avg) Mbps | now $('{0:N2}' -f $c.mbps_now) Mbps | $cLocalIp"
-            } else { $lblCable.Text = "Cable: -" }
-            if ($st.channels.wifi) {
-                $w = $st.channels.wifi
-                $wLocalIp = Get-OptionalPropValue -Obj $w -Name 'local_ip' -Default ''
-                $lblWifi.Text = "Wi-Fi: $($w.state) | $('{0:N1}' -f ($w.bytes_sent / 1MB)) MB | avg $('{0:N2}' -f $w.mbps_avg) Mbps | now $('{0:N2}' -f $w.mbps_now) Mbps | $wLocalIp"
-            } else { $lblWifi.Text = "Wi-Fi: -" }
-        }
+        Update-ChannelsList $st.channels
 
         if ($st.status -eq 'done') {
             $timer.Stop(); Set-UiState -State 'done' -HasOutput; $lblStatus.Text = "Status: done | envio concluído"
@@ -1153,8 +1239,7 @@ $btnSelectNone.Add_Click({
         $script:SelectedJobId = $null
         $lblStatus.Text = "Nenhuma transferência selecionada"
         $progress.Value = 0
-        $lblCable.Text = "Cable: -"
-        $lblWifi.Text = "Wi-Fi: -"
+        Update-ChannelsList $null
         $lblMetrics.Text = ""
         Update-ActionButtons
     } catch {
@@ -1172,12 +1257,60 @@ $listDownloads.Add_SelectedIndexChanged({
             $script:SelectedJobId = $null
             $lblStatus.Text = "Nenhuma transferência selecionada"
             $progress.Value = 0
-            $lblCable.Text = "Cable: -"
-            $lblWifi.Text = "Wi-Fi: -"
+            Update-ChannelsList $null
         }
         Update-ActionButtons
     } catch {
         $lblStatus.Text = "Status: erro na selecao: $($_.Exception.Message)"
+    }
+})
+
+# ---------------------- Layout responsivo (âncoras) ----------------------
+$anchorTLR = [System.Windows.Forms.AnchorStyles]'Top, Left, Right'
+$anchorBLR = [System.Windows.Forms.AnchorStyles]'Bottom, Left, Right'
+$anchorAll = [System.Windows.Forms.AnchorStyles]'Top, Bottom, Left, Right'
+$anchorTR  = [System.Windows.Forms.AnchorStyles]'Top, Right'
+$txtUrl.Anchor = $anchorTLR
+$txtOut.Anchor = $anchorTLR
+$listDownloads.Anchor = $anchorAll
+$btnSelectAll.Anchor = $anchorTR
+$btnSelectNone.Anchor = $anchorTR
+$lblStatus.Anchor = $anchorBLR
+$lblFile.Anchor = $anchorBLR
+$progress.Anchor = $anchorBLR
+$lblMetrics.Anchor = $anchorBLR
+$lblChannelsHdr.Anchor = [System.Windows.Forms.AnchorStyles]'Bottom, Left'
+$listChannels.Anchor = $anchorBLR
+
+# ---------------------- Arrastar-e-soltar para enviar ----------------------
+$form.Add_DragEnter({
+    param($src, $e)
+    if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+    } else {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::None
+    }
+})
+$form.Add_DragDrop({
+    param($src, $e)
+    try {
+        $paths = @($e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
+        if ($paths.Count -eq 0) { return }
+        $launcher = Join-Path $PSScriptRoot 'multisend-launcher.ps1'
+        if (-not (Test-Path -LiteralPath $launcher)) {
+            [System.Windows.Forms.MessageBox]::Show("Launcher não encontrado:`r`n$launcher", 'MultiSend', 'OK', 'Warning') | Out-Null
+            return
+        }
+        $confirm = [System.Windows.Forms.MessageBox]::Show(
+            ("Enviar {0} item(ns) para outro PC?" -f $paths.Count),
+            'MultiSend - Enviar', [System.Windows.Forms.MessageBoxButtons]::OKCancel, [System.Windows.Forms.MessageBoxIcon]::Question)
+        if ($confirm -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $quoted = ($paths | ForEach-Object { '"' + $_ + '"' }) -join ' '
+        $argLine = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$launcher`" $quoted"
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $argLine -WindowStyle Hidden | Out-Null
+        $lblStatus.Text = "Status: envio iniciado via launcher ($($paths.Count) item(ns)) — selecione o destino na janela de envio."
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Falha no arraste-e-solte.`r`n$($_.Exception.Message)", 'Erro', 'OK', 'Error') | Out-Null
     }
 })
 

@@ -7,14 +7,16 @@
 #   L60    Join-List
 #   L66    Split-List
 #   L72    Get-PropValue
-#   L92    Add-Page
-#   L105   New-Label
-#   L106   New-Box
-#   L107   New-Check
-#   L108   Add-LineToMultilineBox
-#   L116   Remove-LineFromMultilineBox
-#   L246   Get-AgentApiPort
-#   L262   Load-Interfaces
+#   L95    Add-Page
+#   L109   New-NodeSecret
+#   L116   New-Label
+#   L117   New-Box
+#   L118   New-Check
+#   L119   Add-LineToMultilineBox
+#   L127   Remove-LineFromMultilineBox
+#   L257   Get-AgentApiPort
+#   L273   Load-Interfaces
+#   Segurança tab controls ~L330; save/validation in $btnSave click
 # ======================= END NAV INDEX =======================
 
 Set-StrictMode -Version Latest
@@ -84,6 +86,9 @@ $form.Text = 'MultiSend - Configurações'
 $form.Width = 1040
 $form.Height = 820
 $form.StartPosition = 'CenterScreen'
+$form.MinimumSize = New-Object System.Drawing.Size(900, 700)
+$form.FormBorderStyle = 'Sizable'
+$form.MaximizeBox = $true
 
 $tabs = New-Object System.Windows.Forms.TabControl
 $tabs.Dock = 'Fill'
@@ -99,8 +104,16 @@ function Add-Page {
 
 $pageGeneral = Add-Page 'Geral'
 $pageInterfaces = Add-Page 'Interfaces'
+$pageSecurity = Add-Page 'Segurança'
 $pageCleanup = Add-Page 'Limpeza'
 $pagePull = Add-Page 'Recebimento LAN'
+
+function New-NodeSecret {
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    return -join ($bytes | ForEach-Object { $_.ToString('x2') })
+}
 
 function New-Label { param($Text,$Left,$Top,$Width=180) $l = New-Object System.Windows.Forms.Label; $l.Text=$Text; $l.Left=$Left; $l.Top=$Top; $l.Width=$Width; return $l }
 function New-Box { param($Left,$Top,$Width=300,$Text='') $t = New-Object System.Windows.Forms.TextBox; $t.Left=$Left; $t.Top=$Top; $t.Width=$Width; $t.Text=$Text; return $t }
@@ -322,6 +335,52 @@ $btnRemoveSelected.Add_Click({
     }
 })
 
+# ---------------------- Segurança ----------------------
+$pageSecurity.Controls.Add((New-Label 'Autenticação entre nós' 20 20 220))
+$requireAuth = Get-PropValue -Object $cfg -Name 'require_auth' -Default $false
+$chkRequireAuth = New-Check 260 16 'Exigir HMAC/token (require_auth)' $requireAuth
+$pageSecurity.Controls.Add($chkRequireAuth)
+$pageSecurity.Controls.Add((New-Label 'Quando ligado, todos os nós precisam compartilhar o MESMO segredo abaixo. Sem isso, envios entre nós são rejeitados.' 20 46 900))
+
+$pageSecurity.Controls.Add((New-Label 'Segredo do nó (node_secret)' 20 86 220))
+$nodeSecretVal = [string](Get-PropValue -Object $cfg -Name 'node_secret' -Default '')
+$txtSecret = New-Box 260 82 560 $nodeSecretVal
+$txtSecret.UseSystemPasswordChar = $true
+$txtSecret.ReadOnly = $true
+$pageSecurity.Controls.Add($txtSecret)
+
+$chkShowSecret = New-Object System.Windows.Forms.CheckBox
+$chkShowSecret.Left = 260; $chkShowSecret.Top = 108; $chkShowSecret.Width = 120; $chkShowSecret.Text = 'Mostrar'
+$pageSecurity.Controls.Add($chkShowSecret)
+$chkShowSecret.Add_CheckedChanged({ $txtSecret.UseSystemPasswordChar = -not $chkShowSecret.Checked })
+
+$btnGenSecret = New-Object System.Windows.Forms.Button
+$btnGenSecret.Text = 'Gerar novo'; $btnGenSecret.Left = 830; $btnGenSecret.Top = 80; $btnGenSecret.Width = 100
+$pageSecurity.Controls.Add($btnGenSecret)
+$btnGenSecret.Add_Click({
+    $confirm = [System.Windows.Forms.MessageBox]::Show("Gerar novo segredo? Os outros nós precisarão ser atualizados com o mesmo valor.", 'MultiSend', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    if ($confirm -eq [System.Windows.Forms.DialogResult]::Yes) { $txtSecret.Text = New-NodeSecret }
+})
+
+$btnCopySecret = New-Object System.Windows.Forms.Button
+$btnCopySecret.Text = 'Copiar'; $btnCopySecret.Left = 830; $btnCopySecret.Top = 112; $btnCopySecret.Width = 100
+$pageSecurity.Controls.Add($btnCopySecret)
+$btnCopySecret.Add_Click({
+    if ([string]::IsNullOrWhiteSpace($txtSecret.Text)) { return }
+    try { [System.Windows.Forms.Clipboard]::SetText($txtSecret.Text); $status.Text = 'Segredo copiado para a área de transferência.' } catch {}
+})
+
+$pageSecurity.Controls.Add((New-Label 'Se vazio, um segredo é gerado automaticamente ao salvar. Compartilhe-o por canal seguro com os nós pareados.' 20 142 900))
+
+$pageSecurity.Controls.Add((New-Label 'Raízes de envio permitidas' 20 182 220))
+$pageSecurity.Controls.Add((New-Label '(remote_send_roots)' 20 202 220))
+$remoteRootsArr = Get-PropValue -Object $cfg -Name 'remote_send_roots' -Default @()
+$txtRemoteRoots = New-Box 260 182 660 (Join-List $remoteRootsArr)
+$txtRemoteRoots.Multiline = $true; $txtRemoteRoots.Height = 120
+$txtRemoteRoots.ScrollBars = 'Vertical'
+$pageSecurity.Controls.Add($txtRemoteRoots)
+$pageSecurity.Controls.Add((New-Label 'Pastas (1 por linha) que outro PC pode pedir via remote-send. Vazio = apenas a pasta de recebimento. Bloqueia exfiltração de caminhos arbitrários.' 260 308 660))
+
 $pageCleanup.Controls.Add((New-Label 'Limpar chunks concluídos' 20 20 220))
 $cleanupChunks = Get-PropValue -Object $cfg -Name 'cleanup_completed_chunks' -Default $false
 $chkCleanupChunks = New-Check 260 16 'Ativado' $cleanupChunks
@@ -418,8 +477,12 @@ $btnRestore.Add_Click({
 
 $btnSave.Add_Click({
     try {
+        $recv = $txtReceive.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($recv)) { throw 'Pasta de recebimento não pode ficar vazia.' }
+        try { [System.IO.Directory]::CreateDirectory($recv) | Out-Null }
+        catch { throw "Pasta de recebimento inválida: $recv`r`n$($_.Exception.Message)" }
         $cfg | Add-Member -MemberType NoteProperty -Name 'display_name' -Value $txtDisplay.Text.Trim() -Force
-        $cfg | Add-Member -MemberType NoteProperty -Name 'receive_path' -Value $txtReceive.Text.Trim() -Force
+        $cfg | Add-Member -MemberType NoteProperty -Name 'receive_path' -Value $recv -Force
         $selectedPorts = Get-PropValue -Object $cfg -Name 'selected_ports' -Default $null
         if ($null -eq $selectedPorts) {
             $cfg | Add-Member -MemberType NoteProperty -Name 'selected_ports' -Value (New-Object PSObject) -Force
@@ -440,6 +503,27 @@ $btnSave.Add_Click({
         $cfg | Add-Member -MemberType NoteProperty -Name 'keep_manifests' -Value $chkKeepManifests.Checked -Force
         $cfg | Add-Member -MemberType NoteProperty -Name 'cleanup_empty_download_dirs' -Value $chkCleanupDirs.Checked -Force
         $cfg | Add-Member -MemberType NoteProperty -Name 'pull_folder_result' -Value ([string]$cmbPullFolderResult.SelectedItem) -Force
+
+        # --- Segurança ---
+        $secret = $txtSecret.Text.Trim()
+        if ($chkRequireAuth.Checked -and [string]::IsNullOrWhiteSpace($secret)) {
+            $secret = New-NodeSecret
+            $txtSecret.Text = $secret
+        }
+        $cfg | Add-Member -MemberType NoteProperty -Name 'require_auth' -Value $chkRequireAuth.Checked -Force
+        if (-not [string]::IsNullOrWhiteSpace($secret)) {
+            $cfg | Add-Member -MemberType NoteProperty -Name 'node_secret' -Value $secret -Force
+        }
+        $roots = @(Split-List $txtRemoteRoots.Text)
+        $missing = @($roots | Where-Object { -not (Test-Path -LiteralPath $_) })
+        if ($missing.Count -gt 0) {
+            $proceed = [System.Windows.Forms.MessageBox]::Show(
+                ("Estas raízes de envio não existem:`r`n{0}`r`n`r`nSalvar mesmo assim?" -f ($missing -join "`r`n")),
+                'MultiSend', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($proceed -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        }
+        $cfg | Add-Member -MemberType NoteProperty -Name 'remote_send_roots' -Value $roots -Force
+
         Backup-Config | Out-Null
         Write-Config $cfg
         [System.Windows.Forms.MessageBox]::Show("Configuração salva.`r`nReinicie o MultiSend Agent para aplicar completamente.", 'MultiSend', 'OK', 'Information') | Out-Null

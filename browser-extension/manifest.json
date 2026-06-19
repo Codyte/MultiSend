@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "MultiSend Download Helper",
+  "version": "1.0.0",
+  "description": "Sends links to the local MultiSend protocol handler.",
+  "permissions": ["contextMenus", "tabs"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Send with MultiSend"
+  }
+}

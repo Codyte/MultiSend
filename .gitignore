@@ -1,0 +1,51 @@
+MultiSend/v4/V4.rar
+MultiSend/v3/V3.rar
+MultiSend/v2/V2.rar
+MultiSend/v1/V1.rar
+MultiSend/v5/v5.rar
+MultiSend/v*/
+# Added by code-review-graph
+.code-review-graph/
+.navindex-cache.json
+
+# Local agent/tool configuration
+.claude/
+.kiro/
+.guia/
+.mcp.json
+.opencode.json
+.cursorrules
+.windsurfrules
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Local scratch files and generated diagnostics
+tmp-*.ps1
+ruvector.db
+*.log
+MultiSend/_dyn_*.log
+MultiSend/req.json
+MultiSend/test_*.ps1
+MultiSend/patch_ui*.py
+
+# Build archives and generated installer outputs
+MultiSend/*.exe
+MultiSend/dist/*
+!MultiSend/dist/
+!MultiSend/dist/MultiSendSetup.iss
+
+# Runtime/user data
+MultiSend/**/*.tmp
+MultiSend/**/*.bak
+MultiSend/**/*.cache
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa
+id_ed25519

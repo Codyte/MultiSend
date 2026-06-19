@@ -3,6 +3,9 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -388,6 +391,17 @@ func (a *app) handleConn(conn net.Conn) {
 		log.Printf("read header: %v", err)
 		return
 	}
+	if !proto.VerifyHeader(h, a.cfg.AuthSecret()) {
+		log.Printf("reject unauthenticated chunk transfer=%s index=%d", h.TransferID, h.ChunkIndex)
+		_ = proto.WriteChunkAck(conn, proto.ChunkAck{
+			Type:       "chunk_ack",
+			TransferID: h.TransferID,
+			ChunkIndex: h.ChunkIndex,
+			Status:     "unauthorized",
+			Error:      "authentication required",
+		})
+		return
+	}
 	name := filepath.Base(h.FileName)
 	safeTransferID := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
@@ -455,10 +469,28 @@ func (a *app) handleConn(conn net.Conn) {
 		return
 	}
 	defer f.Close()
-	written, err := io.CopyN(f, conn, h.PartSize)
+	hasher := sha256.New()
+	written, err := io.CopyN(io.MultiWriter(f, hasher), conn, h.PartSize)
 	if err != nil {
 		log.Printf("copy payload: %v", err)
 		return
+	}
+	// SEC-3: verify the payload against the sender-supplied digest before acking.
+	if h.ChunkSHA256 != "" {
+		got := hex.EncodeToString(hasher.Sum(nil))
+		if !strings.EqualFold(got, h.ChunkSHA256) {
+			log.Printf("reject chunk hash mismatch transfer=%s index=%d", h.TransferID, h.ChunkIndex)
+			_ = f.Close()
+			_ = os.Remove(target)
+			_ = proto.WriteChunkAck(conn, proto.ChunkAck{
+				Type:       "chunk_ack",
+				TransferID: h.TransferID,
+				ChunkIndex: h.ChunkIndex,
+				Status:     "hash_mismatch",
+				Error:      "chunk integrity check failed",
+			})
+			return
+		}
 	}
 	if err := proto.WriteChunkAck(conn, proto.ChunkAck{
 		Type:          "chunk_ack",
@@ -1185,6 +1217,10 @@ func (a *app) remoteSend(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
+	if !a.controlAuthOK(r) {
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
 	var req struct {
 		FilePath          string `json:"file_path"`
 		TargetNodeID      string `json:"target_node_id"`
@@ -1199,6 +1235,13 @@ func (a *app) remoteSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.FilePath) == "" {
 		writeAPIError(w, r, http.StatusBadRequest, "file_path_required", "file_path is required")
+		return
+	}
+	// SEC-1: a remote peer may only request files inside the configured shared
+	// roots. This blocks arbitrary file exfiltration via /remote-send.
+	if !a.isRemoteSendPathAllowed(req.FilePath) {
+		log.Printf("reject remote-send outside shared roots: %q from %s", req.FilePath, r.RemoteAddr)
+		writeAPIError(w, r, http.StatusForbidden, "path_not_shared", "file_path is outside the shared roots")
 		return
 	}
 	peerAddress := strings.TrimSpace(req.TargetPeerAddress)
@@ -1233,6 +1276,10 @@ func (a *app) remoteSend(w http.ResponseWriter, r *http.Request) {
 func (a *app) remoteJobByID(w http.ResponseWriter, r *http.Request) {
 	if !a.isRemoteAllowed(r.RemoteAddr) {
 		writeAPIError(w, r, http.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	if !a.controlAuthOK(r) {
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 	rel := strings.TrimPrefix(r.URL.Path, "/remote-jobs/")
@@ -1898,6 +1945,7 @@ func (a *app) enrichSendOptions(opts transfer.SendOptions) transfer.SendOptions 
 	}
 	opts.InterfaceRefreshSeconds = refresh
 	opts.AllowNewInterfaces = a.cfg.AllowNewInterfaces
+	opts.AuthSecret = a.cfg.AuthSecret()
 	opts.InterfaceProvider = func() []transfer.InterfaceBinding {
 		infos := detectUsableInterfaces(a.cfg)
 		out := make([]transfer.InterfaceBinding, 0, len(infos))
@@ -1914,6 +1962,52 @@ func (a *app) enrichSendOptions(opts transfer.SendOptions) transfer.SendOptions 
 		return out
 	}
 	return opts
+}
+
+// remoteSendRoots returns the directories a remote peer may pull from. When the
+// config leaves it empty we default to the receive path, the folder already
+// designated for MultiSend sharing.
+// controlAuthOK enforces a bearer token on the control API when RequireAuth is
+// on. The token is the shared NodeSecret. When auth is disabled it always
+// allows, preserving backward compatibility for unpaired setups.
+func (a *app) controlAuthOK(r *http.Request) bool {
+	secret := strings.TrimSpace(a.cfg.NodeSecret)
+	if !a.cfg.RequireAuth || secret == "" {
+		return true
+	}
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	provided := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) == 1
+}
+
+func (a *app) remoteSendRoots() []string {
+	if len(a.cfg.RemoteSendRoots) == 0 {
+		return []string{a.cfg.ReceivePath}
+	}
+	return a.cfg.RemoteSendRoots
+}
+
+// isRemoteSendPathAllowed reports whether p resolves inside one of the shared
+// roots. Symlinks are rejected separately by prepareRemoteSendSource.
+func (a *app) isRemoteSendPathAllowed(p string) bool {
+	abs, err := filepath.Abs(strings.TrimSpace(p))
+	if err != nil {
+		return false
+	}
+	for _, root := range a.remoteSendRoots() {
+		rootAbs, err := filepath.Abs(strings.TrimSpace(root))
+		if err != nil || rootAbs == "" {
+			continue
+		}
+		if abs == rootAbs || isUnder(abs, rootAbs) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *app) isRemoteAllowed(remoteAddr string) bool {

@@ -124,8 +124,16 @@ type state struct {
 	allowRange bool
 	chSamples  map[string][]sample
 	idleGapMS  map[string]int64
+	// rootDir is the download root captured at job creation. Using it (instead of
+	// the live Manager.baseDir) keeps path validation stable if the config's
+	// ReceivePath changes mid-job (B-9).
+	rootDir string
 }
 
+// maxChunkAttempts is intentionally higher than the LAN sender's
+// maxAttemptsPerChunk: HTTP(S) downloads cross the public internet where
+// transient failures (proxies, rate limits, DNS) are common and worth retrying
+// more aggressively than a local peer transfer. See transfer.maxAttemptsPerChunk.
 const maxChunkAttempts = 8
 
 type sample struct {
@@ -376,6 +384,7 @@ func (m *Manager) prepare(id string, req StartRequest) (*state, error) {
 		allowRange: true,
 		chSamples:  map[string][]sample{"cable": {}, "wifi": {}},
 		idleGapMS:  map[string]int64{"cable": 0, "wifi": 0},
+		rootDir:    baseDir,
 	}, nil
 }
 
@@ -1435,7 +1444,11 @@ func (m *Manager) PreviewCleanup(id string) (CleanupPreview, error) {
 		return p, fmt.Errorf("%s", p.Reason)
 	}
 	sessionDir := sessionDirFor(st.job.ID, st.job.OutputPath)
-	rootAbs, _ := filepath.Abs(m.baseDir)
+	root := st.rootDir
+	if strings.TrimSpace(root) == "" {
+		root = m.baseDir
+	}
+	rootAbs, _ := filepath.Abs(root)
 	sessAbs, _ := filepath.Abs(sessionDir)
 	if !isUnder(sessAbs, rootAbs) {
 		p.Reason = "cleanup path outside allowed download root"

@@ -21,6 +21,10 @@ import (
 	"lab/multinet/internal/scheduler"
 )
 
+// maxAttemptsPerChunk bounds retries for a LAN peer transfer. It is deliberately
+// lower than the download manager's maxChunkAttempts: on a local network a chunk
+// that fails repeatedly usually means the peer/interface is gone, so we fail fast
+// rather than spin. See download.maxChunkAttempts.
 const maxAttemptsPerChunk = 3
 
 type localChannel struct {
@@ -43,6 +47,8 @@ type SendOptions struct {
 	InterfaceProvider       func() []InterfaceBinding
 	InterfaceRefreshSeconds int
 	AllowNewInterfaces      bool
+	// AuthSecret keys the HMAC applied to each chunk header. Nil disables signing.
+	AuthSecret []byte
 }
 
 type InterfaceBinding struct {
@@ -127,7 +133,11 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 	if err != nil {
 		return SendResult{}, err
 	}
-	identity := buildIdentity(absPath, st.Size(), st.ModTime(), target.Address, chunkSize)
+	fingerprint, err := contentFingerprint(f, st.Size())
+	if err != nil {
+		return SendResult{}, err
+	}
+	identity := buildIdentity(absPath, st.Size(), st.ModTime(), target.Address, chunkSize, fingerprint)
 	manifestPath := senderManifestPath(identity)
 	mf, err := loadOrCreateManifest(manifestPath, identity, absPath, base, st, chunkSize, target.Address, plan, opts.ExplicitResume)
 	if err != nil {
@@ -136,6 +146,7 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 	if err := manifest.SaveAtomic(manifestPath, mf); err != nil {
 		return SendResult{}, err
 	}
+	saver := newManifestSaver(manifestPath, 750*time.Millisecond)
 
 	var sentCable, sentWifi int64
 	sched := scheduler.NewWeightedScheduler()
@@ -149,6 +160,10 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 	channels := make([]localChannel, 0, 2)
 	if opts.Lab || isLoopbackTarget(target.Address) {
 		channels = append(channels, localChannel{name: "loopback", ip: ""})
+		// Track the loopback channel under its own key so its telemetry is
+		// actually updated by the worker (B-7); also mirror to "cable" for UIs
+		// that only render the cable/wifi pair.
+		chStats.set("loopback", ChannelDetail{State: "active", InterfaceName: "loopback", BytesSent: 0})
 		chStats.set("cable", ChannelDetail{State: "active", InterfaceName: "loopback", BytesSent: 0})
 	} else {
 		channels = buildDynamicChannels(localIPs, opts.InterfaceProvider)
@@ -162,9 +177,15 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 	var hardErr atomic.Value
 	inFlight := map[string]int{}
 
-	workerCount := 2
-	if len(channels) == 1 {
+	// One worker per channel, with a floor of 1. When dynamic interface discovery
+	// is enabled, keep at least 2 workers so a second interface that appears
+	// mid-transfer is actually used (B-6).
+	workerCount := len(channels)
+	if workerCount < 1 {
 		workerCount = 1
+	}
+	if opts.AllowNewInterfaces && workerCount < 2 {
+		workerCount = 2
 	}
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
@@ -209,7 +230,7 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 				}
 				chunkState := mf.MarkAndGetSending(idx, selected.name)
 				inFlight[selected.name]++
-				_ = manifest.SaveAtomic(manifestPath, mf)
+				saver.save(mf, false)
 				if s, ok := chStats.get(selected.name); ok {
 					s.State = "active"
 					chStats.set(selected.name, s)
@@ -220,8 +241,21 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 				}
 
 				start := time.Now()
+				chunkHash, hashErr := hashSection(f, chunkState.Offset, chunkState.Size)
+				if hashErr != nil {
+					mu.Lock()
+					if inFlight[selected.name] > 0 {
+						inFlight[selected.name]--
+					}
+					mf.MarkFailed(chunkState.Index, hashErr.Error())
+					hardErr.Store(fmt.Errorf("hash chunk %d: %w", chunkState.Index, hashErr))
+					saver.save(mf, true)
+					mu.Unlock()
+					sendCancel()
+					return
+				}
 				reader := io.NewSectionReader(f, chunkState.Offset, chunkState.Size)
-				err := sendChunkCtx(sendCtx, target.Address, selected.ip, proto.Header{
+				header := proto.Header{
 					MessageType:    "chunk_start",
 					TransferID:     mf.TransferID,
 					FileName:       base,
@@ -236,7 +270,10 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 					ReceiveRelPath: opts.ReceiveRelPath,
 					PublishName:    opts.PublishName,
 					FolderResult:   opts.FolderResult,
-				}, reader, &sentCable, &sentWifi, selected.name)
+					ChunkSHA256:    chunkHash,
+				}
+				proto.SignHeader(&header, opts.AuthSecret)
+				err := sendChunkCtx(sendCtx, target.Address, selected.ip, header, reader, &sentCable, &sentWifi, selected.name)
 				if err != nil {
 					mu.Lock()
 					if inFlight[selected.name] > 0 {
@@ -250,7 +287,7 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 							hardErr.Store(fmt.Errorf("chunk %d exceeded retries", c.Index))
 						}
 					}
-					_ = manifest.SaveAtomic(manifestPath, mf)
+					saver.save(mf, hardErr.Load() != nil)
 					if s, ok := chStats.get(selected.name); ok {
 						s.Failures++
 						s.LastError = err.Error()
@@ -277,8 +314,8 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 				if inFlight[selected.name] > 0 {
 					inFlight[selected.name]--
 				}
-				mf.MarkDone(chunkState.Index, chunkState.Size, "")
-				_ = manifest.SaveAtomic(manifestPath, mf)
+				mf.MarkDone(chunkState.Index, chunkState.Size, chunkHash)
+				saver.save(mf, false)
 				if s, ok := chStats.get(selected.name); ok {
 					s.State = "active"
 					s.LastError = ""
@@ -297,15 +334,23 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 	if ctx.Err() != nil {
 		mu.Lock()
 		mf.MarkCanceledPending()
-		_ = manifest.SaveAtomic(manifestPath, mf)
+		saver.save(mf, true)
 		mu.Unlock()
 		return SendResult{ManifestPath: manifestPath, TransferID: mf.TransferID}, ctx.Err()
 	}
 	if v := hardErr.Load(); v != nil {
+		mu.Lock()
+		saver.save(mf, true)
+		mu.Unlock()
 		return SendResult{ManifestPath: manifestPath, TransferID: mf.TransferID}, v.(error)
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	// Flush the final manifest state so a crash right after completion still
+	// records every done chunk for resume/verification.
+	if err := saver.flush(mf); err != nil {
+		return SendResult{ManifestPath: manifestPath, TransferID: mf.TransferID}, fmt.Errorf("persist final manifest: %w", err)
+	}
 	for _, c := range mf.Chunks {
 		if c.Status != manifest.StatusDone {
 			return SendResult{ManifestPath: manifestPath, TransferID: mf.TransferID}, fmt.Errorf("transfer incomplete")
@@ -314,8 +359,8 @@ func SendFileSplitWithResultCtx(ctx context.Context, filePath string, target Pee
 	return SendResult{ManifestPath: manifestPath, TransferID: mf.TransferID}, nil
 }
 
-func buildIdentity(absPath string, size int64, mod time.Time, target string, chunkSize int64) string {
-	raw := fmt.Sprintf("%s|%d|%d|%s|%d", absPath, size, mod.Unix(), target, chunkSize)
+func buildIdentity(absPath string, size int64, mod time.Time, target string, chunkSize int64, fingerprint string) string {
+	raw := fmt.Sprintf("%s|%d|%d|%s|%d|%s", absPath, size, mod.Unix(), target, chunkSize, fingerprint)
 	s := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(s[:16])
 }
@@ -565,7 +610,7 @@ func (s *channelStats) updateFromChannels(channels []localChannel) {
 	}
 }
 
-func sendChunkCtx(ctx context.Context, server, localIP string, h proto.Header, r io.Reader, sentCable, sentWifi *int64, channel string) error {
+func sendChunkCtx(ctx context.Context, server, localIP string, h proto.Header, r io.Reader, sentCable, sentWifi *int64, channel string) (err error) {
 	var d net.Dialer
 	if strings.TrimSpace(localIP) != "" {
 		parsedIP := net.ParseIP(localIP)
@@ -579,6 +624,15 @@ func sendChunkCtx(ctx context.Context, server, localIP string, h proto.Header, r
 		return err
 	}
 	defer conn.Close()
+	pw := &progressReader{r: r, cable: sentCable, wifi: sentWifi, channel: channel}
+	// B-1: a chunk only "counts" toward progress once it is fully acked. If the
+	// attempt fails after streaming partial bytes, roll those bytes back so the
+	// retry does not double-count and inflate the progress/ETA.
+	defer func() {
+		if err != nil {
+			pw.rollback()
+		}
+	}()
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -587,30 +641,34 @@ func sendChunkCtx(ctx context.Context, server, localIP string, h proto.Header, r
 		case <-done:
 		}
 	}()
-	if err := proto.WriteHeader(conn, h); err != nil {
+	if err = proto.WriteHeader(conn, h); err != nil {
 		close(done)
 		return err
 	}
-	pw := &progressReader{r: r, cable: sentCable, wifi: sentWifi, channel: channel}
-	written, err := io.Copy(conn, pw)
-	if err != nil {
+	written, copyErr := io.Copy(conn, pw)
+	if copyErr != nil {
 		close(done)
+		err = copyErr
 		return err
 	}
 	if written != h.PartSize {
 		close(done)
-		return fmt.Errorf("chunk size mismatch wrote=%d want=%d", written, h.PartSize)
+		err = fmt.Errorf("chunk size mismatch wrote=%d want=%d", written, h.PartSize)
+		return err
 	}
-	ack, err := proto.ReadChunkAck(conn)
+	ack, ackErr := proto.ReadChunkAck(conn)
 	close(done)
-	if err != nil {
+	if ackErr != nil {
+		err = ackErr
 		return err
 	}
 	if ack.Status != "done" || ack.ChunkIndex != h.ChunkIndex {
-		return fmt.Errorf("chunk ack failed status=%s index=%d", ack.Status, ack.ChunkIndex)
+		err = fmt.Errorf("chunk ack failed status=%s index=%d", ack.Status, ack.ChunkIndex)
+		return err
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		err = ctx.Err()
+		return err
 	}
 	return nil
 }
@@ -633,17 +691,110 @@ type progressReader struct {
 	cable   *int64
 	wifi    *int64
 	channel string
+	counted int64 // bytes added to the live counters during this attempt
+}
+
+func (p *progressReader) counter() *int64 {
+	switch p.channel {
+	case "cable", "loopback", "local":
+		return p.cable
+	case "wifi":
+		return p.wifi
+	}
+	return nil
 }
 
 func (p *progressReader) Read(buf []byte) (int, error) {
 	n, err := p.r.Read(buf)
 	if n > 0 {
-		if (p.channel == "cable" || p.channel == "loopback" || p.channel == "local") && p.cable != nil {
-			atomic.AddInt64(p.cable, int64(n))
-		}
-		if p.channel == "wifi" && p.wifi != nil {
-			atomic.AddInt64(p.wifi, int64(n))
+		if c := p.counter(); c != nil {
+			atomic.AddInt64(c, int64(n))
+			atomic.AddInt64(&p.counted, int64(n))
 		}
 	}
 	return n, err
+}
+
+// rollback removes the bytes this attempt added to the live counters. Called
+// when the chunk attempt fails so a retry does not double-count (B-1).
+func (p *progressReader) rollback() {
+	counted := atomic.SwapInt64(&p.counted, 0)
+	if counted == 0 {
+		return
+	}
+	if c := p.counter(); c != nil {
+		atomic.AddInt64(c, -counted)
+	}
+}
+
+// manifestSaver coalesces manifest writes to avoid an fsync per chunk (B-3).
+// All methods are called while the sender's mutex is held, so it needs no
+// internal locking. Throttled errors are surfaced by the final flush (B-4).
+type manifestSaver struct {
+	path     string
+	interval time.Duration
+	last     time.Time
+	lastErr  error
+}
+
+func newManifestSaver(path string, interval time.Duration) *manifestSaver {
+	return &manifestSaver{path: path, interval: interval}
+}
+
+// save persists the manifest, but at most once per interval unless force is set.
+func (s *manifestSaver) save(m *manifest.Manifest, force bool) {
+	if !force && !s.last.IsZero() && time.Since(s.last) < s.interval {
+		return
+	}
+	if err := manifest.SaveAtomic(s.path, m); err != nil {
+		s.lastErr = err
+		return
+	}
+	s.last = time.Now()
+	s.lastErr = nil
+}
+
+// flush forces a final write and returns any persistent error.
+func (s *manifestSaver) flush(m *manifest.Manifest) error {
+	if err := manifest.SaveAtomic(s.path, m); err != nil {
+		s.lastErr = err
+		return err
+	}
+	s.last = time.Now()
+	s.lastErr = nil
+	return nil
+}
+
+// hashSection returns the lowercase hex SHA-256 of size bytes at offset.
+func hashSection(r io.ReaderAt, offset, size int64) (string, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, io.NewSectionReader(r, offset, size)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// contentFingerprint returns a cheap, deterministic fingerprint of a file's
+// content used to detect in-place edits that keep the same size/mtime (B-2).
+// It hashes the size plus the head and tail windows; for small files it hashes
+// the whole content. It is a heuristic, not a full-file checksum.
+func contentFingerprint(r io.ReaderAt, size int64) (string, error) {
+	const window = 64 * 1024
+	h := sha256.New()
+	fmt.Fprintf(h, "size:%d\x00", size)
+	if size <= 2*window {
+		if size > 0 {
+			if _, err := io.Copy(h, io.NewSectionReader(r, 0, size)); err != nil {
+				return "", err
+			}
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	}
+	if _, err := io.Copy(h, io.NewSectionReader(r, 0, window)); err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(h, io.NewSectionReader(r, size-window, window)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

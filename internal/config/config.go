@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,39 @@ import (
 
 	"lab/multinet/internal/ports"
 )
+
+// GenerateSecret returns a fresh 256-bit hex secret for node authentication.
+func GenerateSecret() string {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand failure is fatal-grade; fall back to a time seed so the node
+		// still boots, but such a value should never be relied on in practice.
+		return hex.EncodeToString([]byte(fmt.Sprintf("fallback-%d", time.Now().UnixNano())))
+	}
+	return hex.EncodeToString(buf)
+}
+
+// SecretBytes returns the raw secret bytes used to key the HMAC, or nil when no
+// secret is configured.
+func (c Config) SecretBytes() []byte {
+	s := strings.TrimSpace(c.NodeSecret)
+	if s == "" {
+		return nil
+	}
+	if b, err := hex.DecodeString(s); err == nil && len(b) > 0 {
+		return b
+	}
+	return []byte(s)
+}
+
+// AuthSecret returns the secret bytes only when authentication is enforced;
+// otherwise nil (authentication disabled).
+func (c Config) AuthSecret() []byte {
+	if !c.RequireAuth {
+		return nil
+	}
+	return c.SecretBytes()
+}
 
 type SelectedPorts struct {
 	Transfer  int `json:"transfer"`
@@ -32,7 +67,6 @@ type Config struct {
 	ChunkMode                string        `json:"chunk_mode"`
 	ChunkSizeMB              int           `json:"chunk_size_mb"`
 	StartOnLogin             bool          `json:"start_agent_on_login"`
-	IgnoredIfaces            []string      `json:"ignored_interfaces"`
 	LocalAPIPort             int           `json:"local_api_port,omitempty"`
 	ControlPort              int           `json:"control_port,omitempty"`
 	TransferPortRange        ports.Range   `json:"transfer_port_range"`
@@ -57,6 +91,18 @@ type Config struct {
 	DownloadChannelStrategy  string        `json:"download_channel_strategy"`
 	DownloadSplitCablePct    int           `json:"download_split_cable_pct"`
 	PullFolderResult         string        `json:"pull_folder_result"`
+	// NodeSecret is a hex-encoded shared secret used to authenticate transfers
+	// (HMAC on the wire protocol) and the control API. It is auto-generated on
+	// first run. Paired nodes must share the same value for RequireAuth to work.
+	NodeSecret string `json:"node_secret,omitempty"`
+	// RequireAuth enforces HMAC verification on the receiver and a bearer token
+	// on the control API. Off by default so existing unpaired setups keep working;
+	// turn on once the same NodeSecret has been provisioned on every paired node.
+	RequireAuth bool `json:"require_auth"`
+	// RemoteSendRoots whitelists the directories a remote peer may request through
+	// /remote-send. Requests for paths outside these roots are rejected. Empty
+	// defaults to the receive path, preventing arbitrary file exfiltration.
+	RemoteSendRoots []string `json:"remote_send_roots,omitempty"`
 }
 
 func NormalizeInterfacePolicy(v string) string {
@@ -79,7 +125,7 @@ func DefaultConfig() Config {
 		userProfile = `C:\Users\Public`
 	}
 	return Config{
-		SchemaVersion:            3,
+		SchemaVersion:            4,
 		AppVersion:               "0.1.0",
 		NodeID:                   nodeID,
 		DisplayName:              host,
@@ -92,7 +138,6 @@ func DefaultConfig() Config {
 		ChunkMode:                "auto",
 		ChunkSizeMB:              32,
 		StartOnLogin:             true,
-		IgnoredIfaces:            []string{"loopback", "hyper-v", "tailscale", "vpn", "virtualbox", "vmware", "docker", "wsl", "bluetooth"},
 		LocalAPIPort:             55204,
 		ControlPort:              55205,
 		TransferPortRange:        ports.Range{Start: 56200, End: 56210},
@@ -108,7 +153,7 @@ func DefaultConfig() Config {
 		IgnoreLinkLocal:          true,
 		AllowedIfTypes:           []string{"ethernet", "wifi", "usb_ethernet", "unknown"},
 		ManualInterfaces:         []string{},
-		IgnoredInterfaces:        []string{},
+		IgnoredInterfaces:        []string{"loopback", "hyper-v", "tailscale", "vpn", "virtualbox", "vmware", "docker", "wsl", "bluetooth"},
 		CleanupCompletedChunks:   false,
 		KeepManifests:            true,
 		CleanupEmptyDownloadDirs: false,
@@ -117,6 +162,9 @@ func DefaultConfig() Config {
 		DownloadChannelStrategy:  "dynamic",
 		DownloadSplitCablePct:    50,
 		PullFolderResult:         "zip",
+		NodeSecret:               GenerateSecret(),
+		RequireAuth:              false,
+		RemoteSendRoots:          []string{},
 	}
 }
 
@@ -237,6 +285,18 @@ func migrateLegacyConfig(cfg *Config) bool {
 		cfg.KeepManifests = true
 		cfg.CleanupEmptyDownloadDirs = false
 		cfg.SchemaVersion = 3
+		migrated = true
+	}
+	if cfg.SchemaVersion < 4 {
+		cfg.SchemaVersion = 4
+		migrated = true
+	}
+	if strings.TrimSpace(cfg.NodeSecret) == "" {
+		cfg.NodeSecret = GenerateSecret()
+		migrated = true
+	}
+	if cfg.RemoteSendRoots == nil {
+		cfg.RemoteSendRoots = []string{}
 		migrated = true
 	}
 	if cfg.TransferPortRange.Start == 0 || cfg.TransferPortRange.End == 0 {

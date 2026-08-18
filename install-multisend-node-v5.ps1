@@ -1,44 +1,47 @@
 # ====================== BEGIN NAV INDEX ======================
 # NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-#   L98    Write-Utf8NoBomFile
-#   L105   Write-Log
-#   L106   Write-Check
-#   L107   Write-Section
-#   L108   Write-Step
-#   L109   Write-Pass
-#   L110   Write-Skip
-#   L111   Write-WarnLine
-#   L113   Test-IsAdministrator
-#   L118   Ensure-Admin
-#   L119   Ensure-Mode
-#   L125   Get-UserConfigPath
-#   L126   Get-DefaultReceiveRoot
-#   L132   Ensure-Directories
-#   L137   Save-State
-#   L138   Read-State
-#   L139   Find-Binary
-#   L140   Test-AgentRunning
-#   L141   Get-AgentProcesses
-#   L143   Install-Binaries
-#   L154   Install-ExtensionFiles
-#   L167   New-NodeConfig
-#   L234   Ensure-Firewall
-#   L284   Set-AutoStart
-#   L298   Ensure-ExplorerContext
-#   L383   Ensure-ProtocolRegistration
-#   L409   Stop-Agent
-#   L410   Start-Agent
-#   L412   Remove-RegistrySubKeyTreeSafe
-#   L423   Remove-ExplorerContextKeysSafe
-#   L434   Remove-ProtocolRegistrationSafe
-#   L436   Ensure-Shortcuts
-#   L467   Remove-ShortcutsSafe
-#   L487   Run-Install
-#   L509   Run-Test
-#   L584   Run-Uninstall
-#   L600   Run-Repair
-#   L601   Run-Doctor
-#   L602   Run-LabSmoke
+#   L102   Write-Utf8NoBomFile
+#   L109   Write-Log
+#   L110   Write-Check
+#   L111   Write-Section
+#   L112   Write-Step
+#   L113   Write-Pass
+#   L114   Write-Skip
+#   L115   Write-WarnLine
+#   L117   Test-IsAdministrator
+#   L122   Ensure-Admin
+#   L123   Ensure-Mode
+#   L129   Get-UserConfigPath
+#   L130   Get-DefaultReceiveRoot
+#   L136   Ensure-Directories
+#   L141   Save-State
+#   L142   Read-State
+#   L143   Find-Binary
+#   L144   Test-AgentRunning
+#   L145   Get-AgentProcesses
+#   L147   Install-Binaries
+#   L158   Install-ExtensionFiles
+#   L171   New-NodeConfig
+#   L238   Ensure-Firewall
+#   L288   Set-AutoStart
+#   L302   Ensure-ExplorerContext
+#   L387   Ensure-ProtocolRegistration
+#   L413   Stop-Agent
+#   L414   Start-Agent
+#   L416   Remove-RegistrySubKeyTreeSafe
+#   L427   Remove-ExplorerContextKeysSafe
+#   L438   Remove-ProtocolRegistrationSafe
+#   L440   Ensure-Shortcuts
+#   L471   Remove-ShortcutsSafe
+#   L491   Run-Install
+#   L513   Run-Test
+#   L588   Run-Uninstall
+#   L604   Run-Repair
+#   L605   Get-DiagnosticAgent
+#   L614   Invoke-AgentDiagnostic
+#   L622   Run-Doctor
+#   L623   Run-LabSmoke
+#   L624   Run-DownloadSmoke
 # ======================= END NAV INDEX =======================
 
 [CmdletBinding(SupportsShouldProcess=$true)]
@@ -49,6 +52,7 @@ param(
     [switch]$Test,
     [switch]$Doctor,
     [switch]$LabSmoke,
+    [switch]$DownloadSmoke,
 
     [switch]$EnableAutoStart,
     [switch]$DisableAutoStart,
@@ -117,8 +121,8 @@ function Test-IsAdministrator {
 }
 function Ensure-Admin { if (-not (Test-IsAdministrator)) { throw 'Run this script as Administrator.' } }
 function Ensure-Mode {
-    $selected = @($Install,$Uninstall,$Repair,$Test,$Doctor,$LabSmoke) | Where-Object { $_ }
-    if ($selected.Count -ne 1) { throw 'Select exactly one mode: -Install, -Uninstall, -Repair, -Test, -Doctor, or -LabSmoke.' }
+    $selected = @($Install,$Uninstall,$Repair,$Test,$Doctor,$LabSmoke,$DownloadSmoke) | Where-Object { $_ }
+    if ($selected.Count -ne 1) { throw 'Select exactly one mode: -Install, -Uninstall, -Repair, -Test, -Doctor, -LabSmoke, or -DownloadSmoke.' }
     if ($EnableAutoStart -and $DisableAutoStart) { throw 'Select only one autostart option: -EnableAutoStart or -DisableAutoStart.' }
 }
 
@@ -598,15 +602,33 @@ function Run-Uninstall {
 }
 
 function Run-Repair { Write-Section 'MultiSend repair'; Write-Log -Level 'INFO' -Message 'Repair started.'; Run-Install }
-function Run-Doctor { Write-Section 'MultiSend doctor'; $installed = Join-Path $Paths.BinRoot 'multisend-agent.exe'; $local = Join-Path $ScriptRoot 'multisend-agent.exe'; $agent = if (Test-Path -LiteralPath $installed) { Write-Pass "Using installed agent: $installed"; $installed } elseif (Test-Path -LiteralPath $local) { Write-WarnLine "Installed agent not found. Using local fallback: $local"; $local } else { Write-Check 'FAIL' 'multisend-agent.exe not found (installed or local).'; throw 'CRITICAL: doctor could not find multisend-agent.exe.' }; & $agent --doctor; if ($LASTEXITCODE -ne 0) { throw "agent --doctor exited with code $LASTEXITCODE" } Write-Pass 'agent --doctor finished successfully' }
-function Run-LabSmoke { Write-Section 'MultiSend lab smoke'; $installed = Join-Path $Paths.BinRoot 'multisend-agent.exe'; $local = Join-Path $ScriptRoot 'multisend-agent.exe'; $agent = if (Test-Path -LiteralPath $installed) { Write-Pass "Using installed agent: $installed"; $installed } elseif (Test-Path -LiteralPath $local) { Write-WarnLine "Installed agent not found. Using local fallback: $local"; $local } else { Write-Check 'FAIL' 'multisend-agent.exe not found (installed or local).'; throw 'CRITICAL: lab smoke could not find multisend-agent.exe.' }; & $agent --lab-smoke; if ($LASTEXITCODE -ne 0) { throw "lab-smoke failed with exit code $LASTEXITCODE" }; Write-Pass 'agent --lab-smoke finished successfully' }
+function Get-DiagnosticAgent {
+    param([string]$Operation)
+    $installed = Join-Path $Paths.BinRoot 'multisend-agent.exe'
+    $local = Join-Path $ScriptRoot 'multisend-agent.exe'
+    if (Test-Path -LiteralPath $installed) { Write-Pass "Using installed agent: $installed"; return $installed }
+    if (Test-Path -LiteralPath $local) { Write-WarnLine "Installed agent not found. Using local fallback: $local"; return $local }
+    Write-Check 'FAIL' 'multisend-agent.exe not found (installed or local).'
+    throw "CRITICAL: $Operation could not find multisend-agent.exe."
+}
+function Invoke-AgentDiagnostic {
+    param([string]$Title,[string]$Operation,[string]$Argument)
+    Write-Section $Title
+    $agent = Get-DiagnosticAgent -Operation $Operation
+    & $agent $Argument
+    if ($LASTEXITCODE -ne 0) { throw "$Operation failed with exit code $LASTEXITCODE" }
+    Write-Pass "$Operation finished successfully"
+}
+function Run-Doctor { Invoke-AgentDiagnostic -Title 'MultiSend doctor' -Operation 'agent doctor' -Argument '--doctor' }
+function Run-LabSmoke { Invoke-AgentDiagnostic -Title 'MultiSend lab smoke' -Operation 'agent lab smoke' -Argument '--lab-smoke' }
+function Run-DownloadSmoke { Invoke-AgentDiagnostic -Title 'MultiSend download smoke' -Operation 'agent download smoke' -Argument '--download-smoke' }
 
 try {
     Ensure-Mode
     $isAdmin = Test-IsAdministrator
     if (($Install -or $Uninstall -or $Repair) -and -not $isAdmin) { Ensure-Admin }
-    if (($Test -or $Doctor -or $LabSmoke) -and -not $isAdmin) { Write-Warning 'Running without Administrator. Firewall checks may be limited.' }
-    switch ($true) { $Install { Run-Install; break } $Uninstall { Run-Uninstall; break } $Repair { Run-Repair; break } $Test { Run-Test -IsAdmin:$isAdmin; break } $Doctor { Run-Doctor; break } $LabSmoke { Run-LabSmoke; break } }
+    if (($Test -or $Doctor -or $LabSmoke -or $DownloadSmoke) -and -not $isAdmin) { Write-Warning 'Running without Administrator. Firewall checks may be limited.' }
+    switch ($true) { $Install { Run-Install; break } $Uninstall { Run-Uninstall; break } $Repair { Run-Repair; break } $Test { Run-Test -IsAdmin:$isAdmin; break } $Doctor { Run-Doctor; break } $LabSmoke { Run-LabSmoke; break } $DownloadSmoke { Run-DownloadSmoke; break } }
     Write-Host ''; Write-Check 'DONE' 'MultiSend installer finished.'; Write-Check 'LOG' $Paths.InstallLog; exit 0
 } catch {
     Write-Host ''; Write-Check 'FAIL' $_.Exception.Message; Write-Check 'LOG' $Paths.InstallLog; exit 1

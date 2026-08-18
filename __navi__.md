@@ -1,28 +1,28 @@
-# __navi__ · repo tree — 77 files in 20 folders
+# __navi__ · repo tree — 82 files in 20 folders
 <!-- navindex · 2026-08-18 · DO NOT EDIT BY HAND; regen via navindex skill -->
 
 Universal index: every folder below -> the files it holds (names only). A `→ __navi__.md` marker means that folder has a symbol map — open `<that path>/__navi__.md` for exact line numbers (2 reads total: this tree -> folder map).
 
 ## `./` (8 files) → __navi__.md
-CONTRIBUTING.md(24)  README.md(86)  SECURITY.md(55)  install-multisend-node-v5.ps1(613)  multisend-download-ui.ps1(18)  multisend-launcher.ps1(600)  multisend-settings-ui.ps1(580)  rebuild-multisend-setup.ps1(117)
+CONTRIBUTING.md(24)  README.md(87)  SECURITY.md(63)  install-multisend-node-v5.ps1(635)  multisend-download-ui.ps1(18)  multisend-launcher.ps1(600)  multisend-settings-ui.ps1(580)  rebuild-multisend-setup.ps1(117)
 
 ## `browser-extension/` (3 files) → __navi__.md
 README.md(11)  background.js(26)  manifest.json(14)
 
 ## `cmd/multirecv/` (2 files) → __navi__.md
-main.go(172)  main_test.go(151)
+main.go(166)  main_test.go(180)
 
 ## `cmd/multisend/` (2 files) → __navi__.md
 main.go(407)  main_test.go(97)
 
-## `cmd/multisend-agent/` (16 files) → __navi__.md
-config_api.go(332)  config_api_test.go(163)  doctor.go(639)  doctor_test.go(26)  download_smoke.go(348)  history.go(581)  history_test.go(286)  http_api.go(159)  http_api_test.go(124)  lab_smoke.go(531)  lab_smoke_test.go(41)  main.go(2852)  main_test.go(587)  smoke_cleanup.go(123)  smoke_cleanup_test.go(81)  web.go(24)
+## `cmd/multisend-agent/` (21 files) → __navi__.md
+config_api.go(332)  config_api_test.go(163)  dashboard_api.go(69)  doctor.go(639)  doctor_test.go(26)  download_api.go(241)  download_smoke.go(348)  history.go(581)  history_test.go(312)  http_api.go(160)  http_api_test.go(178)  lab_smoke.go(531)  lab_smoke_test.go(41)  main.go(451)  main_test.go(744)  pull.go(812)  receiver.go(762)  send.go(744)  smoke_cleanup.go(123)  smoke_cleanup_test.go(81)  web.go(24)
 
 ## `cmd/multisend-agent/web/` (3 files) → __navi__.md
-app.js(717)  index.html(341)  styles.css(487)
+app.js(744)  index.html(315)  styles.css(488)
 
 ## `docs/` (10 files)
-BLINDADO-OPERACAO.md(23)  CONFIG_API.md(120)  DOWNLOAD_HISTORY.md(66)  INSTALLATION.md(62)  OPERATION_HISTORY.md(63)  PUBLICATION_CHECKLIST.md(35)  QUALITY_AUDIT.md(86)  SMOKE_TESTS.md(48)  SPLIT_CLI.md(73)  UI_REFORMULATION.md(193)
+BLINDADO-OPERACAO.md(23)  CONFIG_API.md(120)  DOWNLOAD_HISTORY.md(66)  INSTALLATION.md(63)  OPERATION_HISTORY.md(63)  PUBLICATION_CHECKLIST.md(35)  QUALITY_AUDIT.md(107)  SMOKE_TESTS.md(49)  SPLIT_CLI.md(73)  UI_REFORMULATION.md(238)
 
 ## `internal/chunk/` (2 files) → __navi__.md
 chunk.go(69)  chunk_test.go(68)
@@ -49,7 +49,7 @@ netif.go(74)  netif_test.go(43)
 ports.go(166)  ports_test.go(75)
 
 ## `internal/proto/` (3 files) → __navi__.md
-proto.go(155)  proto_auth_test.go(73)  proto_test.go(36)
+proto.go(184)  proto_auth_test.go(73)  proto_test.go(63)
 
 ## `internal/scheduler/` (2 files) → __navi__.md
 scheduler.go(141)  scheduler_test.go(94)

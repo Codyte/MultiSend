@@ -2,10 +2,14 @@ package main
 
 // ====================== BEGIN NAV INDEX ======================
 // NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-//   L23    TestOperationHistoryRestoresSafeJobAndPullContext
-//   L91    TestOperationHistoryMarksUnsafeManifestNonResumable
-//   L140   TestOperationHistoryRestoresCompletedJobWithoutSourceFile
-//   L169   writeP2PHistoryManifest
+//   L27    TestSaveJSONAtomicReplacesWithoutTemporaryFiles
+//   L49    TestOperationHistoryRestoresSafeJobAndPullContext
+//   L117   TestOperationHistoryMarksUnsafeManifestNonResumable
+//   L166   TestOperationHistoryRestoresCompletedJobWithoutSourceFile
+//   L195   TestForgetOperationHistoryOnlyRemovesTerminalRecord
+//   L227   TestForgetOperationHistoryRejectsActiveAndUnavailableStorage
+//   L240   TestManagedLauncherCleanupPathAndForget
+//   L282   writeP2PHistoryManifest
 // ======================= END NAV INDEX =======================
 
 import (
@@ -19,6 +23,28 @@ import (
 	"github.com/Codyte/MultiSend/internal/manifest"
 	"github.com/Codyte/MultiSend/internal/transfer"
 )
+
+func TestSaveJSONAtomicReplacesWithoutTemporaryFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "runtime.json")
+	if err := saveJSONAtomic(path, map[string]int{"version": 1}); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
+	if err := saveJSONAtomic(path, map[string]int{"version": 2}); err != nil {
+		t.Fatalf("replacement save: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replacement: %v", err)
+	}
+	if !strings.Contains(string(raw), `"version": 2`) || strings.Contains(string(raw), `"version": 1`) {
+		t.Fatalf("unexpected replacement content: %s", raw)
+	}
+	temps, err := filepath.Glob(filepath.Join(dir, ".multisend-*.tmp"))
+	if err != nil || len(temps) != 0 {
+		t.Fatalf("temporary files remain: files=%v err=%v", temps, err)
+	}
+}
 
 func TestOperationHistoryRestoresSafeJobAndPullContext(t *testing.T) {
 	root := t.TempDir()

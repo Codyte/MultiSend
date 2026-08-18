@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,9 @@ import (
 	"time"
 
 	"github.com/Codyte/MultiSend/internal/config"
+	"github.com/Codyte/MultiSend/internal/discovery"
+	"github.com/Codyte/MultiSend/internal/download"
+	"github.com/Codyte/MultiSend/internal/ifmonitor"
 )
 
 func localRequest(method, target string) *http.Request {
@@ -32,8 +36,17 @@ func TestLocalHandlerRedirectsAndServesEmbeddedUI(t *testing.T) {
 	if page.Code != http.StatusOK {
 		t.Fatalf("expected UI 200, got %d body=%s", page.Code, page.Body.String())
 	}
-	if !strings.Contains(page.Body.String(), "MultiSend") {
+	body := page.Body.String()
+	if !strings.Contains(body, "MultiSend") {
 		t.Fatal("embedded UI marker not found")
+	}
+	if !strings.Contains(body, `id="transfer-form"`) {
+		t.Fatal("unified transfer form not found")
+	}
+	for _, legacyForm := range []string{`id="download-form"`, `id="send-form"`, `id="pull-form"`} {
+		if strings.Contains(body, legacyForm) {
+			t.Fatalf("legacy transfer form still embedded: %s", legacyForm)
+		}
 	}
 	if csp := page.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
 		t.Fatalf("expected restrictive CSP, got %q", csp)
@@ -76,6 +89,7 @@ func TestReadOnlyHandlersRejectPost(t *testing.T) {
 	}{
 		{name: "health", fn: a.health},
 		{name: "jobs", fn: a.jobs},
+		{name: "api/v1/dashboard", fn: a.dashboardHandler},
 	} {
 		t.Run(handler.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/"+handler.name, nil)
@@ -85,6 +99,46 @@ func TestReadOnlyHandlersRejectPost(t *testing.T) {
 				t.Fatalf("expected 405, got %d", response.Code)
 			}
 		})
+	}
+}
+
+func TestDashboardHandlerReturnsUnifiedSnapshot(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.NodeID = "node-test"
+	cfg.DisplayName = "Test node"
+	cfg.ReceivePath = t.TempDir()
+
+	originalDetect := detectUsableInterfaces
+	defer func() { detectUsableInterfaces = originalDetect }()
+	detectUsableInterfaces = func(config.Config) []ifmonitor.InterfaceInfo {
+		return []ifmonitor.InterfaceInfo{{Name: "Wi-Fi", IPv4: "192.0.2.10", Usable: true}}
+	}
+
+	a := &app{
+		cfg:       cfg,
+		disc:      discovery.NewManager(cfg.NodeID, cfg.DisplayName, cfg.AppVersion, 56200, 56211, 56231, 56211, 56220, func() []string { return nil }),
+		downloads: download.NewManager(cfg),
+		jobsByID:  map[string]*jobState{},
+		pullsByID: map[string]*pullJobState{},
+	}
+	req := localRequest(http.MethodGet, "/api/v1/dashboard")
+	response := httptest.NewRecorder()
+	a.dashboardHandler(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", response.Code, response.Body.String())
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode dashboard: %v", err)
+	}
+	for _, key := range []string{"health", "peers", "interfaces", "downloads", "jobs", "pulls"} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("dashboard field missing: %s", key)
+		}
+	}
+	var health map[string]any
+	if err := json.Unmarshal(payload["health"], &health); err != nil || health["node_id"] != cfg.NodeID || health["ok"] != true {
+		t.Fatalf("unexpected health snapshot: payload=%v err=%v", health, err)
 	}
 }
 

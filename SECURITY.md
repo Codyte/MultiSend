@@ -38,6 +38,8 @@ it.
 The local API and embedded web UI listen only on `127.0.0.1`. Requests with a non-loopback `Host`
 are rejected, and browser requests that include `Origin` must match the API origin exactly. The web
 UI is served with a restrictive Content Security Policy and does not load remote scripts or styles.
+File paths passed by the local launcher are removed from the browser URL immediately after the
+form is populated, so they are not retained as query parameters in the current history entry.
 
 The control API is a separate trust boundary because it listens on LAN interfaces. Enabling
 `require_auth` requires paired nodes to share the same secret; `remote_send_roots` must remain
@@ -48,6 +50,12 @@ bounded. Authentication fails closed if a required secret is unavailable.
 Remote-send authorization compares filesystem-resolved paths. A symlink or Windows junction below
 an allowed root cannot expose a target outside that root. Node secrets are generated exclusively
 from the operating-system cryptographic random source; there is no predictable fallback.
+
+Receive destinations use the same canonical-path boundary: existing symlink or junction ancestors
+are resolved before accepting a path below `receive_path`. Incoming chunks are written to a
+session-local temporary file, synchronized, checked against the declared SHA-256 and only then
+published atomically. Corrupt manifests are preserved for diagnosis instead of being silently
+replaced.
 
 The diagnostic `multisend.exe` and `multirecv.exe` pair validates chunk hashes and safe transfer
 identifiers. Optional CLI authentication reads `MULTISEND_NODE_SECRET` from the environment so the

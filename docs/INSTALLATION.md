@@ -27,7 +27,8 @@ não são habilitados.
 - `-Uninstall`: remove itens gerenciados;
 - `-Test`: valida arquivos e API; elevado, também valida todos os filtros do firewall;
 - `-Doctor`: executa o diagnóstico do agente;
-- `-LabSmoke`: executa o smoke LAN documentado em `SMOKE_TESTS.md`.
+- `-LabSmoke`: executa o smoke LAN documentado em `SMOKE_TESTS.md`;
+- `-DownloadSmoke`: executa o smoke de download HTTP documentado em `SMOKE_TESTS.md`.
 
 Opções relevantes:
 

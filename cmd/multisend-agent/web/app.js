@@ -1,45 +1,50 @@
 // ====================== BEGIN NAV INDEX ======================
 // NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-//   L47    state
-//   L63    elements
-//   L98    activeStatuses
-//   L99    resumableStatuses
-//   L101   node
-//   L108   number
-//   L113   formatBytes
-//   L122   formatSpeed
-//   L127   statusLabel
-//   L141   normalizeStatus
-//   L146   api
-//   L164   toOperation
-//   L189   allOperations
-//   L197   operationKind
-//   L201   operationTitle
-//   L207   renderOperation
-//   L267   renderOperations
-//   L285   renderNetwork
-//   L320   syncPeerOptions
-//   L331   renderSummary
-//   L341   renderConnection
-//   L348   showBanner
-//   L358   lines
-//   L362   field
-//   L366   setSettingsState
-//   L373   populateSettings
-//   L405   loadSettings
-//   L421   settingsPayload
-//   L447   submitSettings
-//   L469   switchView
-//   L485   switchOperation
-//   L497   render
-//   L505   refresh
-//   L535   submitDownload
-//   L574   showFormError
-//   L583   submitSend
-//   L618   submitPull
-//   L646   runOperationAction
-//   L703   query
-//   L705   source
+//   L52    state
+//   L67    elements
+//   L99    activeStatuses
+//   L100   resumableStatuses
+//   L101   activeRefreshDelayMS
+//   L102   idleRefreshDelayMS
+//   L105   node
+//   L112   number
+//   L117   formatBytes
+//   L126   formatSpeed
+//   L131   statusLabel
+//   L145   normalizeStatus
+//   L150   api
+//   L168   toOperation
+//   L193   allOperations
+//   L201   operationKind
+//   L205   operationTitle
+//   L211   renderOperation
+//   L271   renderOperations
+//   L289   renderNetwork
+//   L324   syncPeerOptions
+//   L335   renderSummary
+//   L345   renderConnection
+//   L352   showBanner
+//   L362   lines
+//   L366   field
+//   L370   setSettingsState
+//   L377   populateSettings
+//   L409   loadSettings
+//   L425   settingsPayload
+//   L451   submitSettings
+//   L473   switchView
+//   L494   render
+//   L502   refresh
+//   L527   clearScheduledRefresh
+//   L534   nextRefreshDelay
+//   L540   scheduleRefresh
+//   L546   refreshAndSchedule
+//   L552   showFormError
+//   L561   detectTransferKind
+//   L570   updateTransferForm
+//   L590   submitTransfer
+//   L668   runOperationAction
+//   L731   query
+//   L734   source
 // ======================= END NAV INDEX =======================
 
 "use strict";
@@ -53,7 +58,6 @@ const state = {
   pulls: [],
   configResponse: null,
   activeView: "dashboard",
-  activeOperation: "download",
   filter: "all",
   loading: true,
   refreshing: false,
@@ -70,19 +74,16 @@ const elements = {
   interfaceCount: document.querySelector("#interface-count"),
   networkContent: document.querySelector("#network-content"),
   operationsList: document.querySelector("#operations-list"),
-  downloadForm: document.querySelector("#download-form"),
-  downloadURL: document.querySelector("#download-url"),
-  downloadSubmit: document.querySelector("#download-submit"),
-  formError: document.querySelector("#form-error"),
-  sendForm: document.querySelector("#send-form"),
-  sendPath: document.querySelector("#send-path"),
-  sendPeer: document.querySelector("#send-peer"),
-  sendSubmit: document.querySelector("#send-submit"),
-  sendError: document.querySelector("#send-error"),
-  pullForm: document.querySelector("#pull-form"),
-  pullSource: document.querySelector("#pull-source"),
-  pullSubmit: document.querySelector("#pull-submit"),
-  pullError: document.querySelector("#pull-error"),
+  transferForm: document.querySelector("#transfer-form"),
+  transferSource: document.querySelector("#transfer-source"),
+  transferMode: document.querySelector("#transfer-mode"),
+  transferKind: document.querySelector("#transfer-kind"),
+  transferPeer: document.querySelector("#transfer-peer"),
+  transferSubmit: document.querySelector("#transfer-submit"),
+  transferError: document.querySelector("#transfer-error"),
+  localOutputFields: document.querySelector("#local-output-fields"),
+  downloadNameField: document.querySelector("#download-name-field"),
+  peerFields: document.querySelector("#peer-fields"),
   dashboardView: document.querySelector("#dashboard-view"),
   settingsView: document.querySelector("#settings-view"),
   settingsForm: document.querySelector("#settings-form"),
@@ -97,6 +98,9 @@ const elements = {
 
 const activeStatuses = new Set(["running", "starting", "resuming", "canceling"]);
 const resumableStatuses = new Set(["canceled", "failed"]);
+const activeRefreshDelayMS = 1200;
+const idleRefreshDelayMS = 5000;
+let refreshTimer = null;
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -275,7 +279,7 @@ function renderOperations() {
   if (operations.length === 0) {
     const empty = node("div", "empty-state");
     empty.append(node("strong", "", state.filter === "all" ? "Nenhuma transferência ainda" : "Nenhuma operação neste filtro"));
-    empty.append(node("span", "", state.filter === "all" ? "Use os formulários acima para baixar, enviar ou receber um arquivo." : "Selecione outro filtro para ver as demais operações."));
+    empty.append(node("span", "", state.filter === "all" ? "Use o formulário acima para baixar, enviar ou receber um arquivo." : "Selecione outro filtro para ver as demais operações."));
     elements.operationsList.append(empty);
     return;
   }
@@ -318,14 +322,14 @@ function renderNetwork() {
 }
 
 function syncPeerOptions() {
-  const selected = elements.sendPeer.value;
+  const selected = elements.transferPeer.value;
   const options = [new Option("Selecione um computador", "")];
   for (const peer of state.peers) {
     const detail = (peer.ips || []).join(", ") || peer.addr || "disponível";
     options.push(new Option(`${peer.name || peer.node_id} — ${detail}`, peer.node_id));
   }
-  elements.sendPeer.replaceChildren(...options);
-  if (state.peers.some((peer) => peer.node_id === selected)) elements.sendPeer.value = selected;
+  elements.transferPeer.replaceChildren(...options);
+  if (state.peers.some((peer) => peer.node_id === selected)) elements.transferPeer.value = selected;
 }
 
 function renderSummary() {
@@ -479,19 +483,12 @@ function switchView(target) {
   if (target === "settings") locationURL.searchParams.set("view", "settings");
   else locationURL.searchParams.delete("view");
   history.replaceState(null, "", locationURL);
-  if (target === "settings" && !state.configResponse) loadSettings();
-}
-
-function switchOperation(target) {
-  state.activeOperation = target;
-  document.querySelectorAll("[data-operation-target]").forEach((button) => {
-    const active = button.dataset.operationTarget === target;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
-  });
-  document.querySelectorAll("[data-operation-form]").forEach((form) => {
-    form.hidden = form.dataset.operationForm !== target;
-  });
+  if (target === "settings") {
+    clearScheduledRefresh();
+    if (!state.configResponse) loadSettings();
+  } else {
+    refreshAndSchedule();
+  }
 }
 
 function render() {
@@ -506,69 +503,50 @@ async function refresh() {
   if (state.refreshing) return;
   state.refreshing = true;
   elements.refreshButton.disabled = true;
-  const requests = [
-    ["health", "/health"],
-    ["peers", "/peers"],
-    ["interfaces", "/interfaces"],
-    ["downloads", "/downloads"],
-    ["jobs", "/jobs"],
-    ["pulls", "/pulls"],
-  ];
-  const results = await Promise.allSettled(requests.map(([, path]) => api(path)));
   const errors = [];
-  results.forEach((result, index) => {
-    const key = requests[index][0];
-    if (result.status === "fulfilled") {
-      state[key] = result.value ?? (key === "health" || key === "interfaces" ? null : []);
-    } else {
-      if (key === "health") state.health = null;
-      errors.push(`${key}: ${result.reason.message}`);
-    }
-  });
-  state.loading = false;
-  state.refreshing = false;
-  elements.refreshButton.disabled = false;
-  showBanner(errors);
-  render();
+  try {
+    const snapshot = await api("/api/v1/dashboard");
+    state.health = snapshot?.health ?? null;
+    state.peers = snapshot?.peers ?? [];
+    state.interfaces = snapshot?.interfaces ?? null;
+    state.downloads = snapshot?.downloads ?? [];
+    state.jobs = snapshot?.jobs ?? [];
+    state.pulls = snapshot?.pulls ?? [];
+  } catch (error) {
+    state.health = null;
+    errors.push(`dashboard: ${error.message}`);
+  } finally {
+    state.loading = false;
+    state.refreshing = false;
+    elements.refreshButton.disabled = false;
+    showBanner(errors);
+    render();
+  }
 }
 
-async function submitDownload(event) {
-  event.preventDefault();
-  elements.formError.hidden = true;
-  elements.downloadURL.removeAttribute("aria-invalid");
-  const form = new FormData(elements.downloadForm);
-  const rawURL = String(form.get("url") || "").trim();
-  try {
-    const parsed = new URL(rawURL);
-    if (!new Set(["http:", "https:"]).has(parsed.protocol)) throw new Error("Use uma URL HTTP ou HTTPS válida.");
-  } catch (error) {
-    elements.downloadURL.setAttribute("aria-invalid", "true");
-    elements.formError.textContent = error.message === "Use uma URL HTTP ou HTTPS válida." ? error.message : "Informe uma URL HTTP ou HTTPS válida.";
-    elements.formError.hidden = false;
-    elements.downloadURL.focus();
-    return;
+function clearScheduledRefresh() {
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer);
+    refreshTimer = null;
   }
+}
 
-  const chunkSize = number(form.get("chunk_size_mb"));
-  const payload = {
-    url: rawURL,
-    output_dir: String(form.get("output_dir") || "").trim(),
-    file_name: String(form.get("file_name") || "").trim(),
-    chunk_size_mb: chunkSize > 0 ? chunkSize : 0,
-  };
-  elements.downloadSubmit.disabled = true;
-  elements.downloadSubmit.textContent = "Iniciando…";
-  try {
-    await api("/downloads", { method: "POST", body: payload });
-    elements.downloadForm.reset();
-    await refresh();
-  } catch (error) {
-    elements.formError.textContent = error.message;
-    elements.formError.hidden = false;
-  } finally {
-    elements.downloadSubmit.disabled = false;
-    elements.downloadSubmit.textContent = "Iniciar download";
-  }
+function nextRefreshDelay() {
+  return allOperations().some((operation) => activeStatuses.has(operation.status))
+    ? activeRefreshDelayMS
+    : idleRefreshDelayMS;
+}
+
+function scheduleRefresh() {
+  clearScheduledRefresh();
+  if (document.visibilityState !== "visible" || state.activeView !== "dashboard") return;
+  refreshTimer = window.setTimeout(refreshAndSchedule, nextRefreshDelay());
+}
+
+async function refreshAndSchedule() {
+  clearScheduledRefresh();
+  await refresh();
+  scheduleRefresh();
 }
 
 function showFormError(element, input, message) {
@@ -580,66 +558,110 @@ function showFormError(element, input, message) {
   }
 }
 
-async function submitSend(event) {
-  event.preventDefault();
-  elements.sendError.hidden = true;
-  elements.sendPath.removeAttribute("aria-invalid");
-  const form = new FormData(elements.sendForm);
-  const filePath = String(form.get("file_path") || "").trim();
-  const peerNodeID = String(form.get("peer_node_id") || "").trim();
-  const peerAddress = String(form.get("peer_address") || "").trim();
-  if (!/^(?:[a-zA-Z]:[\\/]|\\\\)/.test(filePath)) {
-    showFormError(elements.sendError, elements.sendPath, "Informe um caminho absoluto do Windows ou UNC.");
-    return;
-  }
-  if (!peerNodeID && !peerAddress) {
-    showFormError(elements.sendError, elements.sendPeer, "Selecione um computador ou informe o endereço manual.");
-    return;
-  }
-  elements.sendSubmit.disabled = true;
-  elements.sendSubmit.textContent = "Iniciando…";
-  try {
-    await api("/send", { method: "POST", body: {
-      file_path: filePath,
-      peer_node_id: peerNodeID,
-      peer_address: peerAddress,
-      chunk_size_mb: Math.max(0, number(form.get("chunk_size_mb"))),
-    } });
-    elements.sendForm.reset();
-    await refresh();
-  } catch (error) {
-    showFormError(elements.sendError, null, error.message);
-  } finally {
-    elements.sendSubmit.disabled = false;
-    elements.sendSubmit.textContent = "Iniciar envio";
-  }
+function detectTransferKind(source, requestedMode = elements.transferMode.value) {
+  if (!source) return "";
+  if (requestedMode !== "auto") return requestedMode;
+  if (/^https?:\/\//i.test(source)) return "download";
+  if (/^file:\/\//i.test(source) || /^\\\\/.test(source)) return "pull";
+  if (/^[a-zA-Z]:[\\/]/.test(source)) return "send";
+  return "";
 }
 
-async function submitPull(event) {
+function updateTransferForm() {
+  const kind = detectTransferKind(elements.transferSource.value.trim());
+  const descriptions = {
+    download: "Download HTTP(S) para este computador.",
+    pull: "Recebimento de um compartilhamento remoto para este computador.",
+    send: "Envio de um arquivo local para outro computador.",
+  };
+  elements.transferKind.textContent = descriptions[kind] || "Informe uma URL, caminho local ou compartilhamento de rede.";
+  elements.localOutputFields.hidden = kind !== "download" && kind !== "pull";
+  elements.downloadNameField.hidden = kind !== "download";
+  elements.peerFields.hidden = kind !== "send";
+  elements.transferSubmit.disabled = kind === "";
+  elements.transferSubmit.textContent = {
+    download: "Iniciar download",
+    pull: "Iniciar recebimento",
+    send: "Iniciar envio",
+  }[kind] || "Iniciar transferência";
+  return kind;
+}
+
+async function submitTransfer(event) {
   event.preventDefault();
-  elements.pullError.hidden = true;
-  elements.pullSource.removeAttribute("aria-invalid");
-  const form = new FormData(elements.pullForm);
-  const sourceURL = String(form.get("source_url") || "").trim();
-  if (!/^file:\/\//i.test(sourceURL) && !/^\\\\/.test(sourceURL)) {
-    showFormError(elements.pullError, elements.pullSource, "Use uma origem file:// ou um caminho UNC.");
+  elements.transferError.hidden = true;
+  elements.transferSource.removeAttribute("aria-invalid");
+  if (!elements.transferForm.checkValidity()) {
+    elements.transferForm.reportValidity();
+    showFormError(elements.transferError, null, "Revise os campos obrigatórios ou fora da faixa permitida.");
     return;
   }
-  elements.pullSubmit.disabled = true;
-  elements.pullSubmit.textContent = "Iniciando…";
-  try {
-    await api("/pulls", { method: "POST", body: {
-      source_url: sourceURL,
+  const form = new FormData(elements.transferForm);
+  const source = String(form.get("source") || "").trim();
+  const kind = detectTransferKind(source, String(form.get("transfer_mode") || "auto"));
+  if (!kind) {
+    showFormError(elements.transferError, elements.transferSource, "Use uma URL HTTP(S), caminho local absoluto ou compartilhamento UNC/file://.");
+    return;
+  }
+  const chunkSize = Math.max(0, number(form.get("chunk_size_mb")));
+  let path;
+  let payload;
+  if (kind === "download") {
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error();
+    } catch {
+      showFormError(elements.transferError, elements.transferSource, "Informe uma URL HTTP ou HTTPS válida.");
+      return;
+    }
+    path = "/downloads";
+    payload = {
+      url: source,
       output_dir: String(form.get("output_dir") || "").trim(),
-      chunk_size_mb: Math.max(0, number(form.get("chunk_size_mb"))),
-    } });
-    elements.pullForm.reset();
-    await refresh();
+      file_name: String(form.get("file_name") || "").trim(),
+      chunk_size_mb: chunkSize,
+    };
+  } else if (kind === "pull") {
+    if (!/^file:\/\//i.test(source) && !/^\\\\/.test(source)) {
+      showFormError(elements.transferError, elements.transferSource, "Para receber, use uma origem file:// ou um caminho UNC.");
+      return;
+    }
+    path = "/pulls";
+    payload = {
+      source_url: source,
+      output_dir: String(form.get("output_dir") || "").trim(),
+      chunk_size_mb: chunkSize,
+    };
+  } else {
+    if (!/^(?:[a-zA-Z]:[\\/]|\\\\)/.test(source)) {
+      showFormError(elements.transferError, elements.transferSource, "Para enviar, use um caminho absoluto do Windows ou UNC.");
+      return;
+    }
+    const peerNodeID = String(form.get("peer_node_id") || "").trim();
+    const peerAddress = String(form.get("peer_address") || "").trim();
+    if (!peerNodeID && !peerAddress) {
+      showFormError(elements.transferError, elements.transferPeer, "Selecione um computador ou informe o endereço manual.");
+      return;
+    }
+    path = "/send";
+    payload = {
+      file_path: source,
+      peer_node_id: peerNodeID,
+      peer_address: peerAddress,
+      chunk_size_mb: chunkSize,
+    };
+  }
+  elements.transferSubmit.disabled = true;
+  elements.transferSubmit.textContent = "Iniciando…";
+  try {
+    await api(path, { method: "POST", body: payload });
+    elements.transferForm.reset();
+    updateTransferForm();
+    await refreshAndSchedule();
   } catch (error) {
-    showFormError(elements.pullError, null, error.message);
+    showFormError(elements.transferError, null, error.message);
   } finally {
-    elements.pullSubmit.disabled = false;
-    elements.pullSubmit.textContent = "Iniciar recebimento";
+    updateTransferForm();
   }
 }
 
@@ -657,7 +679,7 @@ async function runOperationAction(button) {
     const path = `/${encodeURIComponent(type)}/${encodeURIComponent(id)}`;
     if (action === "forget") await api(path, { method: "DELETE" });
     else await api(`${path}/${action}`, { method: "POST", body: {} });
-    await refresh();
+    await refreshAndSchedule();
   } catch (error) {
     showBanner([error.message]);
   } finally {
@@ -677,41 +699,46 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
   });
 });
 
-elements.downloadForm.addEventListener("submit", submitDownload);
-elements.sendForm.addEventListener("submit", submitSend);
-elements.pullForm.addEventListener("submit", submitPull);
+elements.transferForm.addEventListener("submit", submitTransfer);
+elements.transferSource.addEventListener("input", () => {
+  elements.transferError.hidden = true;
+  elements.transferSource.removeAttribute("aria-invalid");
+  updateTransferForm();
+});
+elements.transferMode.addEventListener("change", updateTransferForm);
 elements.settingsForm.addEventListener("submit", submitSettings);
 elements.settingsForm.addEventListener("input", () => {
   if (state.configResponse) setSettingsState("Alterações não salvas", "Revise os valores e salve para persistir.");
 });
-elements.refreshButton.addEventListener("click", () => state.activeView === "settings" ? loadSettings() : refresh());
+elements.refreshButton.addEventListener("click", () => state.activeView === "settings" ? loadSettings() : refreshAndSchedule());
 document.querySelectorAll("[data-view-target]").forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.viewTarget));
-});
-document.querySelectorAll("[data-operation-target]").forEach((button) => {
-  button.addEventListener("click", () => switchOperation(button.dataset.operationTarget));
 });
 elements.operationsList.addEventListener("click", (event) => {
   const button = event.target.closest("[data-operation-action]");
   if (button) runOperationAction(button);
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") refresh();
+  if (document.visibilityState !== "visible") {
+    clearScheduledRefresh();
+  } else if (state.activeView === "settings") {
+    loadSettings();
+  } else {
+    refreshAndSchedule();
+  }
 });
 
-refresh();
 const query = new URLSearchParams(window.location.search);
 if (query.get("view") === "settings") switchView("settings");
+else refreshAndSchedule();
 const source = query.get("source");
 if (source) {
-  if (/^https?:\/\//i.test(source)) {
-    elements.downloadURL.value = source;
-    switchOperation("download");
-  } else {
-    elements.pullSource.value = source;
-    switchOperation("pull");
-  }
+  elements.transferSource.value = source;
+  const mode = query.get("mode");
+  if (["send", "pull", "download"].includes(mode)) elements.transferMode.value = mode;
+  updateTransferForm();
+  const cleanURL = new URL(window.location.href);
+  cleanURL.searchParams.delete("source");
+  cleanURL.searchParams.delete("mode");
+  window.history.replaceState(null, "", cleanURL);
 }
-setInterval(() => {
-  if (document.visibilityState === "visible") refresh();
-}, 1200);

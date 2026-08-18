@@ -2,36 +2,44 @@ package main
 
 // ====================== BEGIN NAV INDEX ======================
 // NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-//   L49    TestControlJSONClientsSendBearerToken
-//   L74    TestControlJSONClientRejectsOversizedResponse
-//   L87    TestControlAPITokenOnlyWhenAuthRequired
-//   L98    TestControlAuthFailsClosedAndAcceptsCaseInsensitiveScheme
-//   L115   TestRemoteSendPathAllowedResolvesSymlinkEscape
-//   L143   TestStartSendRejectsInvalidChunkSizeBeforeCreatingJob
-//   L157   TestSendRejectsLabReceivePathWhenLabFalse
-//   L184   TestSendRejectsRelativePathAndInvalidChunkSize
-//   L214   TestSendRejectsUnsafeCleanupPath
-//   L228   TestPullRejectsInvalidChunkSizeBeforeDiscovery
-//   L238   TestInterfacesHandlerPayload
-//   L283   TestWriteAPIErrorReturnsJSON
-//   L305   TestFormatRemoteAPIErrorIncludesRequestID
-//   L315   TestMergeReceiverChunksOrdersByIndex
-//   L344   TestValidateReceiverFinalSize
-//   L358   TestCleanupReceiverChunksOnlyRemovesChunks
-//   L386   TestFinalizeReceiverSessionIdempotent
-//   L430   TestUpdateReceiverManifestSerializesConcurrentChunks
-//   L476   TestValidateReceiverPathRejectsOutside
-//   L484   TestParseFileSourceAcceptsUNCAndFileURL
-//   L501   TestValidateOutputUnderReceiveReturnsRelativeDestination
-//   L516   TestPrepareRemoteSendSourceFolderCreatesRelativeZip
-//   L551   TestReceiverTargetInfoForPullPublishesOutsideSession
-//   L565   TestExtractZipSafeRejectsTraversal
+//   L58    TestControlJSONClientsSendBearerToken
+//   L83    TestControlJSONClientRejectsOversizedResponse
+//   L96    TestControlAPITokenOnlyWhenAuthRequired
+//   L107   TestControlAuthFailsClosedAndAcceptsCaseInsensitiveScheme
+//   L124   TestRemoteSendPathAllowedResolvesSymlinkEscape
+//   L152   TestStartSendRejectsInvalidChunkSizeBeforeCreatingJob
+//   L166   TestSendRejectsLabReceivePathWhenLabFalse
+//   L193   TestSendRejectsRelativePathAndInvalidChunkSize
+//   L223   TestSendRejectsUnsafeCleanupPath
+//   L237   TestPullRejectsInvalidChunkSizeBeforeDiscovery
+//   L247   TestInterfacesHandlerPayload
+//   L292   TestWriteAPIErrorReturnsJSON
+//   L314   TestFormatRemoteAPIErrorIncludesRequestID
+//   L324   TestMergeReceiverChunksOrdersByIndex
+//   L353   TestValidateReceiverFinalSize
+//   L367   TestCleanupReceiverChunksOnlyRemovesChunks
+//   L395   TestFinalizeReceiverSessionIdempotent
+//   L439   TestUpdateReceiverManifestSerializesConcurrentChunks
+//   L485   TestHandleConnPublishesVerifiedChunkAtomically
+//   L560   TestUpdateReceiverManifestRejectsIdentityChange
+//   L573   TestUpdateReceiverManifestPreservesCorruptManifest
+//   L590   TestValidateReceiverPathRejectsOutside
+//   L598   TestParseFileSourceAcceptsUNCAndFileURL
+//   L615   TestValidateOutputUnderReceiveReturnsRelativeDestination
+//   L633   TestReceivePathsRejectSymbolicLinkEscape
+//   L658   TestPrepareRemoteSendSourceFolderCreatesRelativeZip
+//   L693   TestZipDirectoryRejectsSymbolicLinks
+//   L708   TestReceiverTargetInfoForPullPublishesOutsideSession
+//   L722   TestExtractZipSafeRejectsTraversal
 // ======================= END NAV INDEX =======================
 
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +47,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Codyte/MultiSend/internal/config"
 	"github.com/Codyte/MultiSend/internal/ifmonitor"
@@ -473,6 +482,111 @@ func TestUpdateReceiverManifestSerializesConcurrentChunks(t *testing.T) {
 	}
 }
 
+func TestHandleConnPublishesVerifiedChunkAtomically(t *testing.T) {
+	payload := []byte("abcdef")
+	digest := sha256.Sum256(payload)
+	header := proto.Header{
+		TransferID:  "tx-atomic",
+		FileName:    "payload.bin",
+		PartIndex:   1,
+		TotalParts:  2,
+		PartSize:    int64(len(payload)),
+		ChunkIndex:  0,
+		Offset:      0,
+		TotalBytes:  int64(len(payload) * 2),
+		ChunkSHA256: hex.EncodeToString(digest[:]),
+	}
+	a := &app{cfg: config.Config{ReceivePath: t.TempDir()}, receiverSessions: map[string]*receiverSessionState{}}
+
+	send := func() {
+		server, client := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			a.handleConn(server)
+			close(done)
+		}()
+		if err := client.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatalf("set deadline: %v", err)
+		}
+		if err := proto.WriteHeader(client, header); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if _, err := client.Write(payload); err != nil {
+			t.Fatalf("write payload: %v", err)
+		}
+		ack, err := proto.ReadChunkAck(client)
+		if err != nil {
+			t.Fatalf("read ack: %v", err)
+		}
+		if ack.Status != "done" || ack.BytesReceived != int64(len(payload)) {
+			t.Fatalf("unexpected ack: %+v", ack)
+		}
+		_ = client.Close()
+		<-done
+	}
+
+	send()
+	sessionDir := filepath.Join(a.cfg.ReceivePath, "payload.bin_tx-atomic")
+	target := filepath.Join(sessionDir, "payload.bin.chunk000001")
+	if got, err := os.ReadFile(target); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("published chunk mismatch: data=%q err=%v", got, err)
+	}
+	if entries, err := filepath.Glob(filepath.Join(sessionDir, ".incoming-*.tmp")); err != nil || len(entries) != 0 {
+		t.Fatalf("temporary chunks remain: entries=%v err=%v", entries, err)
+	}
+	if err := os.WriteFile(target, []byte("xxxxxx"), 0o600); err != nil {
+		t.Fatalf("corrupt chunk fixture: %v", err)
+	}
+	if receiverChunkMatches(target, header) {
+		t.Fatal("same-size corrupt chunk must not be accepted")
+	}
+	send()
+	if got, err := os.ReadFile(target); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("retry did not replace corrupt chunk: data=%q err=%v", got, err)
+	}
+
+	a.receiverSessionsMu.RLock()
+	state := a.receiverSessions[sessionDir]
+	a.receiverSessionsMu.RUnlock()
+	if state != nil {
+		state.mu.Lock()
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+		state.mu.Unlock()
+	}
+}
+
+func TestUpdateReceiverManifestRejectsIdentityChange(t *testing.T) {
+	sessionDir := t.TempDir()
+	a := &app{receiverSessions: map[string]*receiverSessionState{}}
+	header := proto.Header{TransferID: "tx-1", FileName: "payload.bin", PartIndex: 1, TotalParts: 1, PartSize: 3, ChunkIndex: 0, TotalBytes: 3}
+	a.ensureReceiverSession(sessionDir, header.FileName, header)
+	if err := manifest.SaveAtomic(filepath.Join(sessionDir, "manifest.json"), &manifest.Manifest{TransferID: "other", FileName: header.FileName, TotalBytes: header.TotalBytes}); err != nil {
+		t.Fatalf("save fixture: %v", err)
+	}
+	if err := a.updateReceiverManifest(sessionDir, header.FileName, header, header.PartSize); err == nil {
+		t.Fatal("expected manifest identity mismatch")
+	}
+}
+
+func TestUpdateReceiverManifestPreservesCorruptManifest(t *testing.T) {
+	sessionDir := t.TempDir()
+	a := &app{receiverSessions: map[string]*receiverSessionState{}}
+	header := proto.Header{TransferID: "tx-1", FileName: "payload.bin", PartIndex: 1, TotalParts: 1, PartSize: 3, ChunkIndex: 0, TotalBytes: 3}
+	a.ensureReceiverSession(sessionDir, header.FileName, header)
+	manifestPath := filepath.Join(sessionDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write corrupt fixture: %v", err)
+	}
+	if err := a.updateReceiverManifest(sessionDir, header.FileName, header, header.PartSize); err == nil {
+		t.Fatal("expected corrupt manifest error")
+	}
+	if raw, err := os.ReadFile(manifestPath); err != nil || string(raw) != "{" {
+		t.Fatalf("corrupt manifest was overwritten: data=%q err=%v", raw, err)
+	}
+}
+
 func TestValidateReceiverPathRejectsOutside(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "root")
 	outside := filepath.Join(t.TempDir(), "other", "file.bin")
@@ -500,6 +614,9 @@ func TestParseFileSourceAcceptsUNCAndFileURL(t *testing.T) {
 
 func TestValidateOutputUnderReceiveReturnsRelativeDestination(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "MultiSend")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir receive root: %v", err)
+	}
 	output := filepath.Join(root, "Downloads", "LAN")
 	rel, err := validateOutputUnderReceive(output, root)
 	if err != nil {
@@ -510,6 +627,31 @@ func TestValidateOutputUnderReceiveReturnsRelativeDestination(t *testing.T) {
 	}
 	if _, err := validateOutputUnderReceive(filepath.Join(t.TempDir(), "outside"), root); err == nil {
 		t.Fatal("expected outside output to be rejected")
+	}
+}
+
+func TestReceivePathsRejectSymbolicLinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+	for name, validate := range map[string]func() error{
+		"output": func() error {
+			_, err := validateOutputUnderReceive(filepath.Join(link, "new"), root)
+			return err
+		},
+		"receive relative": func() error {
+			_, err := resolveReceiveRelRoot(root, filepath.Join("linked", "new"))
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validate(); err == nil {
+				t.Fatal("expected symbolic-link escape rejection")
+			}
+		})
 	}
 }
 
@@ -545,6 +687,21 @@ func TestPrepareRemoteSendSourceFolderCreatesRelativeZip(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected relative file in zip")
+	}
+}
+
+func TestZipDirectoryRejectsSymbolicLinks(t *testing.T) {
+	source := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(source, "linked.txt")); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+	err := zipDirectory(source, filepath.Join(t.TempDir(), "archive.zip"))
+	if err == nil || !strings.Contains(err.Error(), "symbolic link is not supported") {
+		t.Fatalf("expected symbolic-link rejection, got %v", err)
 	}
 }
 

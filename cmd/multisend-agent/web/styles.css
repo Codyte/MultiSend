@@ -182,6 +182,9 @@ h3 { font-size: .96rem; line-height: 1.35; }
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
 a:focus-visible {
   outline: 3px solid rgba(101, 183, 255, .55);
   outline-offset: 2px;
@@ -237,30 +240,29 @@ a:focus-visible {
 .panel { padding: 1.15rem; border-radius: .9rem; }
 .panel-heading { margin-bottom: 1rem; }
 
-.operation-switch {
-  display: inline-flex;
-  gap: .25rem;
-  margin: -.25rem 0 1rem;
-  padding: .25rem;
-  background: rgba(4, 13, 20, .5);
+.transfer-kind {
+  margin: -.25rem 0 .85rem;
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 650;
+}
+
+.advanced-options {
+  margin: .1rem 0 .85rem;
+  padding: .65rem .75rem;
   border: 1px solid var(--border);
   border-radius: .65rem;
 }
 
-.operation-tab {
-  min-height: 2rem;
-  padding: 0 .8rem;
+.advanced-options summary {
   color: var(--muted);
   font-size: .72rem;
   font-weight: 700;
-  background: transparent;
-  border: 0;
-  border-radius: .45rem;
   cursor: pointer;
 }
 
-.operation-tab.active { color: var(--text); background: var(--surface-hover); }
-.operation-form code { color: var(--text); font-family: "Cascadia Mono", Consolas, monospace; }
+.advanced-options[open] summary { margin-bottom: .75rem; }
+.advanced-options .field { margin-bottom: 0; }
 
 .form-row {
   display: grid;
@@ -271,7 +273,6 @@ a:focus-visible {
 .field { display: grid; gap: .38rem; margin-bottom: .75rem; }
 .field > span { color: var(--muted); font-size: .72rem; font-weight: 650; }
 .field small { font-weight: 450; opacity: .72; }
-.field.compact { width: min(12rem, 100%); }
 
 input,
 select,

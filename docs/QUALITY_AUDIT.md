@@ -29,6 +29,28 @@ contratos sem prova, não como meta isolada.
   a criar um job.
 - o modo `-Repair` preserva o estado operacional: um agente previamente ativo volta a iniciar após
   a substituição dos binários.
+- enviar, receber e baixar foram reunidos em um formulário orientado pela origem, mantendo os três
+  endpoints especializados; a UI não exige mais alternar entre abas operacionais;
+- polling do painel passou de seis requisições a cada 1,2 s em repouso (aproximadamente 300/min)
+  para um snapshot a cada 5 s (até 12/min); durante operações, o snapshot a cada 1,2 s limita o
+  teto a 50/min, e consultas são suspensas com a página oculta ou nas configurações.
+- remetente e receptores compartilham a validação estrutural do cabeçalho de chunk, eliminando
+  regras divergentes de identidade, índices, offsets, tamanhos e SHA-256;
+- chunks recebidos são gravados em temporário, sincronizados, verificados e publicados
+  atomicamente; um chunk existente só é reutilizado quando tamanho e hash conferem;
+- manifesto corrompido é preservado e conflito de identidade, destino ou plano de chunks é
+  recusado, em vez de reiniciar silenciosamente uma sessão incompatível;
+- destinos de recebimento resolvem symlinks e junctions nos ancestrais existentes antes de validar
+  `receive_path`; ZIPs de pasta recusam links simbólicos explicitamente para evitar transferências
+  incompletas;
+- `runtime.json`, sidecars e históricos usam a mesma gravação JSON atômica; backups de configuração
+  potencialmente sensíveis usam permissão `0600`;
+- `cmd/multisend-agent/main.go` caiu de 2.824 para cerca de 526 linhas, com recepção, envio, pull e
+  download separados em arquivos do mesmo pacote e sem introduzir abstrações ou dependências.
+- `-Doctor`, `-LabSmoke` e `-DownloadSmoke` usam o mesmo encaminhamento no script administrativo;
+  o smoke de download deixou de exigir chamada direta e divergente ao executável.
+- uma seleção única do Explorer reutiliza o formulário web com origem e modo explícitos; o diálogo
+  WinForms permanece somente para seleção múltipla ou falha ao abrir o navegador.
 
 ## Cobertura atual dos módulos auditados
 
@@ -57,10 +79,9 @@ toolchain deve ser reportada; nunca substituir o teste por uma alegação de apr
 
 ## Próximas oportunidades baseadas em evidência
 
-1. Medir polling e renderização da UI antes de decidir por SSE.
-2. Executar LAN send/pull entre duas máquinas, incluindo arquivo e pasta zip/extract.
-3. Rodar `go test -race ./...` quando houver toolchain CGO local.
-4. Testar instalação e desinstalação em uma máquina Windows sem ambiente de desenvolvimento.
+1. Executar LAN send/pull entre duas máquinas, incluindo arquivo e pasta zip/extract.
+2. Rodar `go test -race ./...` quando houver toolchain CGO local.
+3. Testar instalação e desinstalação em uma máquina Windows sem ambiente de desenvolvimento.
 
 Framework frontend, banco de dados e nova abstração de rede permanecem adiados até existir uma
 necessidade mensurável.

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 type Header struct {
@@ -97,13 +98,41 @@ func ReadHeader(r io.Reader) (Header, error) {
 	if err := readFrame(r, &h); err != nil {
 		return Header{}, err
 	}
-	if h.PartIndex < 1 || h.TotalParts < 1 || h.PartIndex > h.TotalParts || h.PartSize < 0 {
-		return Header{}, fmt.Errorf("invalid header fields")
-	}
 	if h.MessageType == "" {
 		h.MessageType = "chunk_start"
 	}
 	return h, nil
+}
+
+// ValidateHeader validates the structural chunk invariants shared by all
+// receivers. Authentication and digest requirements remain receiver policy.
+func ValidateHeader(h Header) error {
+	if h.MessageType != "" && h.MessageType != "chunk_start" {
+		return fmt.Errorf("invalid message type")
+	}
+	if len(h.TransferID) == 0 || len(h.TransferID) > 128 || strings.IndexFunc(h.TransferID, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
+	}) >= 0 {
+		return fmt.Errorf("invalid transfer_id")
+	}
+	if strings.TrimSpace(h.FileName) == "" {
+		return fmt.Errorf("invalid file_name")
+	}
+	if h.TotalParts < 1 || h.TotalParts > 1_000_000 || h.ChunkIndex < 0 || h.ChunkIndex >= int64(h.TotalParts) || h.PartIndex != int(h.ChunkIndex)+1 {
+		return fmt.Errorf("invalid chunk position")
+	}
+	if h.TotalBytes < 0 || h.Offset < 0 || h.PartSize < 0 || h.PartSize > h.TotalBytes || h.Offset > h.TotalBytes-h.PartSize {
+		return fmt.Errorf("invalid chunk bounds")
+	}
+	if h.ChunkSHA256 != "" {
+		if len(h.ChunkSHA256) != sha256.Size*2 {
+			return fmt.Errorf("invalid chunk_sha256")
+		}
+		if _, err := hex.DecodeString(h.ChunkSHA256); err != nil {
+			return fmt.Errorf("invalid chunk_sha256")
+		}
+	}
+	return nil
 }
 
 func WriteChunkAck(w io.Writer, ack ChunkAck) error {

@@ -2,8 +2,8 @@
 <!-- navindex · 2026-08-18 · DO NOT EDIT BY HAND; regen via navindex skill -->
 ↑ repo tree: [`../../__navi__.md`](../../__navi__.md)
 
-- **main.go** (172 ln)
-  <sub>L21:main  L48:handle  L109:publishChunk  L143:validateChunkHeader  L164:writeChunkError  L169:exitf</sub>
-- **main_test.go** (151 ln)
-  <sub>L19:sendToHandle  L44:chunkHeader  L59:TestHandlePersistsConcurrentChunksSafely  L100:TestHandleRejectsTraversalAndHashMismatch  L132:TestValidateChunkHeaderBounds</sub>
+- **main.go** (166 ln)
+  <sub>L21:main  L48:handle  L109:publishChunk  L145:validateChunkHeader  L158:writeChunkError  L163:exitf</sub>
+- **main_test.go** (180 ln)
+  <sub>L19:sendToHandle  L44:chunkHeader  L59:TestHandlePersistsConcurrentChunksSafely  L100:TestHandleRejectsTraversalAndHashMismatch  L132:TestValidateChunkHeaderBounds  L153:TestPublishChunkPreservesCorruptManifest</sub>
 

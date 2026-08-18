@@ -28,6 +28,7 @@ func (a *app) localHandler() http.Handler {
 	mux.HandleFunc("/downloads/", a.downloadByID)
 	mux.HandleFunc("/interfaces", a.interfacesHandler)
 	mux.HandleFunc("/agent/shutdown", a.shutdownAgent)
+	mux.HandleFunc("/api/v1/dashboard", a.dashboardHandler)
 	mux.HandleFunc("/api/v1/config", a.configHandler)
 	mux.Handle("/ui/", http.StripPrefix("/ui", webUIHandler()))
 	mux.HandleFunc("/ui", func(w http.ResponseWriter, r *http.Request) {

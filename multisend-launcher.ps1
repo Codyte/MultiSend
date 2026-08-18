@@ -1,24 +1,22 @@
 # ====================== BEGIN NAV INDEX ======================
 # NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-#   L47    Write-LauncherLog
-#   L60    Enter-LauncherCoordinator
-#   L71    Exit-LauncherCoordinator
-#   L79    Test-AgentApi
-#   L89    Get-LocalApiCandidates
-#   L119   Resolve-AgentApi
-#   L136   Format-Bytes
-#   L144   Resolve-InputFilePaths
-#   L167   Add-LaunchQueueItem
-#   L176   Collect-QueuedPaths
-#   L197   New-StagedZip
-#   L225   Remove-StagingSafe
-#   L237   Open-WebUI
-#   L265   Normalize-ProtocolUrl
-#   L280   Open-UnifiedSendMonitor
-#   L285   Open-DownloadManager
-#   L289   Show-SendConfigDialog
-#   L415   Get-TransferPortHint
-#   L440   Resolve-ManualPeerAddress
+#   L45    Write-LauncherLog
+#   L58    Enter-LauncherCoordinator
+#   L69    Exit-LauncherCoordinator
+#   L77    Test-AgentApi
+#   L87    Get-LocalApiCandidates
+#   L117   Resolve-AgentApi
+#   L134   Format-Bytes
+#   L142   Resolve-InputFilePaths
+#   L165   Add-LaunchQueueItem
+#   L174   Collect-QueuedPaths
+#   L195   New-StagedZip
+#   L223   Remove-StagingSafe
+#   L235   Open-WebUI
+#   L268   Normalize-ProtocolUrl
+#   L283   Show-SendConfigDialog
+#   L409   Get-TransferPortHint
+#   L434   Resolve-ManualPeerAddress
 # ======================= END NAV INDEX =======================
 
 param(
@@ -238,6 +236,8 @@ function Open-WebUI {
     param(
         [string]$JobId,
         [string]$Source,
+        [ValidateSet('send','pull','download')]
+        [string]$Mode,
         [ValidateSet('dashboard','settings')]
         [string]$TargetView = 'dashboard'
     )
@@ -250,6 +250,9 @@ function Open-WebUI {
     }
     if (-not [string]::IsNullOrWhiteSpace($Source)) {
         $query += ('source={0}' -f [Uri]::EscapeDataString($Source))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Mode)) {
+        $query += ('mode={0}' -f [Uri]::EscapeDataString($Mode))
     }
     if ($query.Count -gt 0) { $url += ('?' + ($query -join '&')) }
     try {
@@ -275,15 +278,6 @@ function Normalize-ProtocolUrl {
     }
     try { $decoded = [Uri]::UnescapeDataString($decoded) } catch {}
     return $decoded.Trim()
-}
-
-function Open-UnifiedSendMonitor {
-    param([Parameter(Mandatory=$true)][string]$JobId)
-    return Open-WebUI -JobId $JobId
-}
-
-function Open-DownloadManager {
-    return Open-WebUI
 }
 
 function Show-SendConfigDialog {
@@ -506,6 +500,12 @@ if ($selectedPaths.Count -eq 0) {
 if ($selectedPaths.Count -eq 1) {
     $sendFilePath = $selectedPaths[0]
     Write-LauncherLog ("Single file selected: {0}" -f $sendFilePath)
+    if (Open-WebUI -Source $sendFilePath -Mode 'send') {
+        Write-LauncherLog 'Single selection handed to unified web form'
+        Exit-LauncherCoordinator
+        exit 0
+    }
+    Write-LauncherLog 'Could not open unified web form; using native send dialog fallback'
 } else {
     Write-LauncherLog ("Packing files count={0}" -f $selectedPaths.Count)
     $bundle = New-StagedZip -Paths $selectedPaths
@@ -569,12 +569,12 @@ $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
 try {
     Write-LauncherLog ("Sending file_path={0}" -f $sendFilePath)
     $res = Invoke-RestMethod -Uri "$api/send" -Method Post -ContentType 'application/json; charset=utf-8' -Body $bytes -ErrorAction Stop
-	if (-not $res.job_id) { Write-LauncherLog "No job_id returned by /send"; Write-Host 'Transfer request returned no job ID.'; $null = Open-DownloadManager; Exit-LauncherCoordinator; exit 1 }
+	if (-not $res.job_id) { Write-LauncherLog "No job_id returned by /send"; Write-Host 'Transfer request returned no job ID.'; $null = Open-WebUI; Exit-LauncherCoordinator; exit 1 }
 	$cleanupPending = $false # agent owns staging until success, resume, or explicit history deletion
     Write-Host ("Transfer started. Job ID: {0}" -f $res.job_id)
     Write-LauncherLog ("Transfer started job_id={0}" -f $res.job_id)
-    $ok = Open-UnifiedSendMonitor -JobId $res.job_id
-	if (-not $ok) { Write-LauncherLog "Failed to open unified send monitor; fallback to download manager"; $null = Open-DownloadManager; Exit-LauncherCoordinator; exit 1 }
+    $ok = Open-WebUI -JobId $res.job_id
+	if (-not $ok) { Write-LauncherLog "Failed to open unified send monitor; fallback to web UI"; $null = Open-WebUI; Exit-LauncherCoordinator; exit 1 }
 } catch {
     $errMsg = $_.Exception.Message
     if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
@@ -589,7 +589,7 @@ try {
     }
     Write-LauncherLog ("Send failed: {0}" -f $errMsg)
     Write-Host ("Failed to start transfer: {0}" -f $errMsg)
-    $null = Open-DownloadManager
+    $null = Open-WebUI
 	if ($cleanupPending) { Write-LauncherLog ("Preserved staging after ambiguous send failure: {0}" -f $stagingSessionDir) }
     Exit-LauncherCoordinator
     exit 1

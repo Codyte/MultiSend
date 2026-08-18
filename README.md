@@ -11,7 +11,8 @@ Target public repository: `Codyte/MultiSend`.
 - Download HTTP/HTTPS files using ranged chunks.
 - Track progress, retries, manifests, cancel/resume, and per-channel telemetry.
 - Use detected interfaces such as Ethernet, Wi-Fi, and USB Ethernet.
-- Monitor and start operations from the embedded responsive UI at the agent's local `/ui/` route.
+- Monitor and start send, receive, and HTTP download operations from one source-driven form in the
+  embedded responsive UI at the agent's local `/ui/` route.
 - Install as a Windows node with Explorer integration, protocol handling, settings UI, and diagnostics.
 
 ## Repository Layout

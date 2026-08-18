@@ -9,7 +9,7 @@ package main
 //   L84    app.operationHistoryDir
 //   L91    app.persistJobLocked
 //   L118   app.persistPullLocked
-//   L132   saveOperationHistory
+//   L132   saveJSONAtomic
 //   L164   app.restoreJobHistory
 //   L185   app.jobStateFromHistory
 //   L256   app.validateRestoredJobOptions
@@ -110,7 +110,7 @@ func (a *app) persistJobLocked(st *jobState) {
 		ChunkSize:      st.chunkSize,
 	}
 	path := filepath.Join(dir, st.details.ID+".json")
-	if err := saveOperationHistory(path, record); err != nil {
+	if err := saveJSONAtomic(path, record); err != nil {
 		logHistoryError("job_history_save_failed", st.details.ID, err)
 	}
 }
@@ -124,12 +124,12 @@ func (a *app) persistPullLocked(st *pullJobState) {
 		return
 	}
 	path := filepath.Join(dir, st.ID+".json")
-	if err := saveOperationHistory(path, persistedPullState{Version: operationHistoryVersion, State: *st}); err != nil {
+	if err := saveJSONAtomic(path, persistedPullState{Version: operationHistoryVersion, State: *st}); err != nil {
 		logHistoryError("pull_history_save_failed", st.ID, err)
 	}
 }
 
-func saveOperationHistory(path string, value any) error {
+func saveJSONAtomic(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func saveOperationHistory(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".history-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".multisend-*.tmp")
 	if err != nil {
 		return err
 	}

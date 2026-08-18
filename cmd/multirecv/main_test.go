@@ -149,3 +149,32 @@ func TestValidateChunkHeaderBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestPublishChunkPreservesCorruptManifest(t *testing.T) {
+	sessionDir := t.TempDir()
+	manifestPath := filepath.Join(sessionDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write corrupt manifest: %v", err)
+	}
+	tmp, err := os.CreateTemp(sessionDir, ".incoming-*.tmp")
+	if err != nil {
+		t.Fatalf("create temporary chunk: %v", err)
+	}
+	payload := []byte("left")
+	if _, err := tmp.Write(payload); err != nil {
+		t.Fatalf("write temporary chunk: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close temporary chunk: %v", err)
+	}
+	h := chunkHeader("tx-corrupt", 0, payload)
+	if err := publishChunk(sessionDir, h.FileName, tmp.Name(), h, int64(len(payload))); err == nil {
+		t.Fatal("expected corrupt manifest error")
+	}
+	if raw, err := os.ReadFile(manifestPath); err != nil || string(raw) != "{" {
+		t.Fatalf("corrupt manifest was overwritten: data=%q err=%v", raw, err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "test.bin.chunk000001")); !os.IsNotExist(err) {
+		t.Fatalf("chunk should not be published, err=%v", err)
+	}
+}

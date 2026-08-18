@@ -126,6 +126,8 @@ func publishChunk(sessionDir, name, tmpPath string, h proto.Header, n int64) err
 		if !found {
 			m.Chunks = append(m.Chunks, manifest.ChunkState{Index: h.ChunkIndex, Offset: h.Offset, Size: h.PartSize, Status: manifest.StatusDone, BytesDone: n})
 		}
+	} else if !os.IsNotExist(lerr) {
+		return fmt.Errorf("load manifest: %w", lerr)
 	}
 	outPath := filepath.Join(sessionDir, fmt.Sprintf("%s.chunk%06d", name, h.ChunkIndex+1))
 	if err := os.Remove(outPath); err != nil && !os.IsNotExist(err) {
@@ -141,16 +143,8 @@ func publishChunk(sessionDir, name, tmpPath string, h proto.Header, n int64) err
 }
 
 func validateChunkHeader(h proto.Header) error {
-	if len(h.TransferID) == 0 || len(h.TransferID) > 128 || strings.IndexFunc(h.TransferID, func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
-	}) >= 0 {
-		return fmt.Errorf("invalid transfer_id")
-	}
-	if h.TotalParts > 1_000_000 || h.ChunkIndex < 0 || h.ChunkIndex >= int64(h.TotalParts) || h.PartIndex != int(h.ChunkIndex)+1 {
-		return fmt.Errorf("invalid chunk position")
-	}
-	if h.TotalBytes < 0 || h.Offset < 0 || h.PartSize > h.TotalBytes || h.Offset > h.TotalBytes-h.PartSize {
-		return fmt.Errorf("invalid chunk bounds")
+	if err := proto.ValidateHeader(h); err != nil {
+		return err
 	}
 	if len(h.ChunkSHA256) != sha256.Size*2 {
 		return fmt.Errorf("chunk_sha256 is required")

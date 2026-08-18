@@ -16,6 +16,9 @@ Implementado em 2026-08-18:
 - painel responsivo incorporado em `/ui/`;
 - resumo do agente, peers, interfaces, downloads, envios e pulls;
 - início de download HTTP(S), envio LAN e recebimento remoto;
+- formulário único de transferência: a origem detecta download, envio ou recebimento, com modo
+  explícito opcional para caminhos UNC ambíguos;
+- modo manual e tamanho de chunk recolhidos em opções avançadas nativas do HTML;
 - ações de interromper, retomar e remover histórico terminal com confirmação;
 - abertura pelo launcher e pelo atalho principal do instalador;
 - proteção de `Host` e `Origin`, CSP, limites de corpo e timeouts HTTP;
@@ -34,10 +37,18 @@ Implementado em 2026-08-18:
 - `multisend-download-ui.ps1` reduzido a shim de compatibilidade para o launcher/web;
 - ZIPs de seleção múltipla pertencem ao job e só são removidos após sucesso ou exclusão explícita
   do histórico, preservando a possibilidade de retomada.
+- polling adaptativo: 1,2 s durante operações ativas, 5 s em repouso e suspenso quando a página
+  está oculta ou na tela de configurações.
+- snapshot `/api/v1/dashboard` reunindo as seis leituras do painel sem alterar os endpoints de
+  comando ou remover APIs de compatibilidade.
+- envio unitário iniciado pelo Explorer abre o formulário web já preenchido e em modo de envio;
+  se o navegador não puder ser aberto, o diálogo nativo continua como fallback; origem e modo são
+  removidos da URL após preencher o formulário.
 
 Os smokes de envio e download agora usam diretórios exclusivos, validam retomada/finalização e
-removem seus próprios artefatos. A próxima mudança arquitetural relevante é medir o polling antes
-de considerar atualização em tempo real; ela não é necessária para o volume atual.
+removem seus próprios artefatos. A medição do painel ocioso encontrou seis requisições a cada
+1,2 s (aproximadamente 300 por minuto). O polling adaptativo e o snapshot único reduzem o teto para
+12 por minuto em repouso e 50 durante transferências; SSE não é necessário para o volume atual.
 
 ## Decisões
 
@@ -46,12 +57,15 @@ de considerar atualização em tempo real; ela não é necessária para o volume
    servidos apenas pela API loopback.
 3. **Sem framework inicialmente.** A primeira versão usa APIs nativas do navegador e a biblioteca
    padrão do Go. Um framework só será introduzido se a complexidade medida justificar o custo.
-4. **Compatibilidade durante a migração.** Os endpoints e scripts PowerShell existentes continuam
+4. **Comando visual único, contratos explícitos.** A tela apresenta uma única ação de transferência,
+   mas encaminha para `/downloads`, `/send` ou `/pulls` conforme a origem. Os endpoints permanecem
+   separados porque possuem validação, destino e ciclo de vida diferentes.
+5. **Compatibilidade durante a migração.** Os endpoints e scripts PowerShell existentes continuam
    funcionando até a nova interface atingir paridade.
-5. **Integração nativa separada.** Explorer, seletor de arquivos e arrastar/soltar caminhos locais
+6. **Integração nativa separada.** Explorer, seletor de arquivos e arrastar/soltar caminhos locais
    permanecem no launcher atual. Uma janela Wails poderá reutilizar o frontend quando essa etapa
    for necessária.
-6. **Segredos pertencem ao agente.** A futura API de configuração nunca deve retornar o segredo do
+7. **Segredos pertencem ao agente.** A futura API de configuração nunca deve retornar o segredo do
    nó por padrão.
 
 ## Estado encontrado
@@ -110,7 +124,8 @@ execute ações administrativas deverá exigir uma intenção local específica 
 - Expor `/ui/` e redirecionar `/` para a interface.
 - Mostrar saúde do agente, peers, interfaces, downloads, envios e pulls.
 - Permitir iniciar download, cancelar e retomar operações.
-- Manter polling de um segundo, atualizando somente os elementos necessários.
+- Atualizar a cada 1,2 s durante operações ativas, reduzir para 5 s em repouso e suspender o polling
+  quando o painel não está visível.
 - Adicionar shutdown por sinal, timeouts HTTP, limites JSON e ordenação estável.
 - Encerrar e reiniciar o agente pelo endpoint local controlado, mantendo `Stop-Process` apenas como
   fallback de compatibilidade.
@@ -149,15 +164,44 @@ explicitamente, preservando os arquivos publicados. Detalhes em `DOWNLOAD_HISTOR
 
 ### 5. Atualização em tempo real
 
-Polling é suficiente para a primeira versão. Server-Sent Events só deve ser adicionado se métricas
-mostrarem atraso, consumo ou churn visual relevantes. WebSocket não é necessário para o contrato
-atual.
+Polling adaptativo é suficiente para a primeira versão. A linha de base ociosa de aproximadamente
+300 requisições por minuto caiu para no máximo 12 com `/api/v1/dashboard`; durante operações, o
+teto caiu de 300 para 50. Em configurações ou com a página oculta, o polling é suspenso.
+Server-Sent Events só deve ser adicionado se métricas futuras mostrarem atraso, consumo ou churn
+visual relevantes. WebSocket não é necessário para o contrato atual.
 
-## Organização pretendida
+## Oportunidades adicionais de unificação
+
+| Área | Direção mínima | Estado |
+|---|---|---|
+| Leitura do painel | Um snapshot para saúde, rede e operações; comandos continuam especializados | Implementado |
+| Envio unitário pelo Explorer | Reutilizar o formulário web para escolher o destino | Implementado, com fallback nativo |
+| Envio múltiplo pelo Explorer | Transferir para a UI a intenção e a posse do ZIP temporário | Requer definir como a UI assume e limpa o staging |
+| Inicialização pelo launcher | Iniciar o agente automaticamente quando uma ação explícita do usuário exigir o serviço | Requer confirmar se o diálogo atual de consentimento deve desaparecer |
+| Segredo do nó | Substituir o último WinForms por um utilitário Go pequeno e explícito | Decisão externa pendente |
+| Shim de download | Remover `multisend-download-ui.ps1` após uma janela de compatibilidade | Adiado para evitar quebrar atalhos externos |
+| CLIs `multisend`/`multirecv` | Manter executáveis diagnósticos separados | Unificação rejeitada: papéis e permissões diferentes |
+| Scripts de diagnóstico | Manter scripts autocontidos enquanto a duplicação for pequena | Módulo PowerShell compartilhado adicionaria custo de empacotamento sem ganho atual |
+
+O envio unitário pelo Explorer já abre `/ui/?source=<caminho>&mode=send`. Para seleção múltipla, o
+launcher ainda cria um ZIP temporário; abrir a página antes de criar o job deixaria esse staging sem
+proprietário se o navegador fosse fechado. A migração deve usar uma intenção local temporária, com
+identificador opaco e expiração, ou manter o diálogo nativo somente nesse caso até existir um shell
+desktop.
+
+## Organização implementada
 
 ```text
 cmd/multisend-agent/
+  main.go           tipos compartilhados, ciclo de vida e inicialização
+  receiver.go       recepção de chunks, manifesto e publicação
+  send.go           jobs de envio LAN e retomada
+  pull.go           recebimento remoto e validação de destino
+  download_api.go   endpoints de download HTTP(S)
   http_api.go       roteadores, limites e middleware HTTP
+  dashboard_api.go  snapshot agregado do painel
+  config_api.go     contrato versionado de configuração
+  history.go        sidecars e gravação JSON atômica
   web.go            assets incorporados e handler da interface
   web/
     index.html
@@ -167,8 +211,9 @@ docs/
   UI_REFORMULATION.md
 ```
 
-O `main.go` será dividido em arquivos do mesmo pacote conforme cada área for modificada. Não será
-criada uma camada abstrata ou pacote novo apenas para reduzir o tamanho do arquivo.
+O `main.go` foi dividido por responsabilidade em arquivos do mesmo pacote. A mudança preserva os
+contratos existentes e evita uma camada abstrata ou pacote novo criado apenas para reduzir o
+tamanho do arquivo.
 
 ## Critérios de aceite
 

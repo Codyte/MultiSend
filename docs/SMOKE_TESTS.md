@@ -10,8 +10,9 @@ Com o agente instalado e em execução:
 & 'C:\Program Files\MultiSend\bin\multisend-agent.exe' --download-smoke
 ```
 
-O instalador expõe os mesmos fluxos com `-Doctor`, `-LabSmoke` e `-Test`. Execute o `-Test`
-elevado quando for necessário conferir todos os atributos das regras de firewall.
+O instalador expõe os mesmos fluxos com `-Doctor`, `-LabSmoke` e `-DownloadSmoke`, além do gate
+`-Test`. Execute o `-Test` elevado quando for necessário conferir todos os atributos das regras de
+firewall.
 
 ## `--doctor`
 

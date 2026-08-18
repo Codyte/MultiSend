@@ -65,45 +65,26 @@
             <h2 id="new-operation-title">Transferir arquivo</h2>
           </div>
         </div>
-        <div class="operation-switch" role="tablist" aria-label="Tipo de operação">
-          <button class="operation-tab active" type="button" role="tab" data-operation-target="download" aria-selected="true">Download</button>
-          <button class="operation-tab" type="button" role="tab" data-operation-target="send" aria-selected="false">Enviar</button>
-          <button class="operation-tab" type="button" role="tab" data-operation-target="pull" aria-selected="false">Receber</button>
-        </div>
-        <form id="download-form" class="operation-form" data-operation-form="download" novalidate>
+        <form id="transfer-form" class="operation-form" novalidate>
           <label class="field full">
-            <span>URL HTTP ou HTTPS</span>
-            <input id="download-url" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://servidor/arquivo.zip" required>
+            <span>Origem</span>
+            <input id="transfer-source" name="source" type="text" autocomplete="off" placeholder="https://servidor/arquivo.zip ou C:\Arquivos\relatorio.zip" aria-describedby="transfer-kind" required>
           </label>
-          <div class="form-row">
+          <p id="transfer-kind" class="transfer-kind" role="status" aria-live="polite">Informe uma URL, caminho local ou compartilhamento de rede.</p>
+          <div id="local-output-fields" class="form-row" hidden>
             <label class="field">
-              <span>Pasta de saída <small>(opcional)</small></span>
+              <span>Pasta local de saída <small>(opcional)</small></span>
               <input name="output_dir" type="text" autocomplete="off" placeholder="Usar pasta padrão">
             </label>
-            <label class="field">
+            <label id="download-name-field" class="field" hidden>
               <span>Nome do arquivo <small>(opcional)</small></span>
               <input name="file_name" type="text" autocomplete="off" placeholder="Detectar pela URL">
             </label>
           </div>
-          <label class="field compact">
-            <span>Chunk em MB <small>(opcional)</small></span>
-            <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
-          </label>
-          <p id="form-error" class="field-error" role="alert" hidden></p>
-          <div class="form-actions">
-            <button id="download-submit" class="button primary" type="submit">Iniciar download</button>
-            <span class="form-hint">O agente continua trabalhando se esta página for fechada.</span>
-          </div>
-        </form>
-        <form id="send-form" class="operation-form" data-operation-form="send" novalidate hidden>
-          <label class="field full">
-            <span>Caminho absoluto do arquivo</span>
-            <input id="send-path" name="file_path" type="text" autocomplete="off" placeholder="C:\Arquivos\relatorio.zip" required>
-          </label>
-          <div class="form-row">
+          <div id="peer-fields" class="form-row" hidden>
             <label class="field">
               <span>Computador de destino</span>
-              <select id="send-peer" name="peer_node_id">
+              <select id="transfer-peer" name="peer_node_id">
                 <option value="">Selecione um computador</option>
               </select>
             </label>
@@ -112,35 +93,28 @@
               <input name="peer_address" type="text" autocomplete="off" placeholder="192.168.1.20:56200">
             </label>
           </div>
-          <label class="field compact">
-            <span>Chunk em MB <small>(opcional)</small></span>
-            <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
-          </label>
-          <p id="send-error" class="field-error" role="alert" hidden></p>
+          <details class="advanced-options">
+            <summary>Opções avançadas</summary>
+            <div class="form-row">
+              <label class="field">
+                <span>Modo</span>
+                <select id="transfer-mode" name="transfer_mode">
+                  <option value="auto">Detectar automaticamente</option>
+                  <option value="send">Enviar arquivo</option>
+                  <option value="pull">Receber de compartilhamento</option>
+                  <option value="download">Baixar URL</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Chunk em MB <small>(opcional)</small></span>
+                <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
+              </label>
+            </div>
+          </details>
+          <p id="transfer-error" class="field-error" role="alert" hidden></p>
           <div class="form-actions">
-            <button id="send-submit" class="button primary" type="submit">Iniciar envio</button>
-            <span class="form-hint">Para escolher pelo Explorer, use o menu “Enviar com MultiSend”.</span>
-          </div>
-        </form>
-        <form id="pull-form" class="operation-form" data-operation-form="pull" novalidate hidden>
-          <label class="field full">
-            <span>Origem remota</span>
-            <input id="pull-source" name="source_url" type="text" autocomplete="off" placeholder="file://COMPUTADOR/Compartilhamento/arquivo.zip" required>
-          </label>
-          <div class="form-row">
-            <label class="field">
-              <span>Pasta local de saída <small>(opcional)</small></span>
-              <input name="output_dir" type="text" autocomplete="off" placeholder="Usar pasta padrão">
-            </label>
-            <label class="field">
-              <span>Chunk em MB <small>(opcional)</small></span>
-              <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
-            </label>
-          </div>
-          <p id="pull-error" class="field-error" role="alert" hidden></p>
-          <div class="form-actions">
-            <button id="pull-submit" class="button primary" type="submit">Iniciar recebimento</button>
-            <span class="form-hint">A origem deve ser um caminho UNC ou URL <code>file://</code> acessível.</span>
+            <button id="transfer-submit" class="button primary" type="submit" disabled>Iniciar transferência</button>
+            <span class="form-hint">O tipo é detectado pela origem; o agente continua trabalhando se a página for fechada.</span>
           </div>
         </form>
       </section>
@@ -320,7 +294,7 @@
           </section>
         </div>
 
-        <section class="settings-savebar" aria-label="Salvar configuração">
+        <section class="settings-savebar" role="status" aria-live="polite" aria-label="Salvar configuração">
           <div>
             <strong id="settings-state">Nenhuma alteração pendente</strong>
             <span id="settings-message">Alterações passam a valer completamente após reiniciar o agente.</span>

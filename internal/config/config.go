@@ -465,5 +465,5 @@ func migrateLegacyConfig(cfg *Config) bool {
 func backupConfig(path string, raw []byte) error {
 	stamp := time.Now().Format("20060102-150405")
 	bak := path + ".bak-" + stamp
-	return os.WriteFile(bak, raw, 0o644)
+	return os.WriteFile(bak, raw, 0o600)
 }

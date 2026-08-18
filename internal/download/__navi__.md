@@ -1,0 +1,9 @@
+# __navi__ · `internal/download/` — 2 files → symbols at exact line numbers
+<!-- navindex · 2026-08-18 · DO NOT EDIT BY HAND; regen via navindex skill -->
+↑ repo tree: [`../../__navi__.md`](../../__navi__.md)
+
+- **manager.go** (2005 ln)
+  <sub>L98:type ChannelStatus  L109:type Job  L135:type ChunkFailureRef  L142:type StartRequest  L149:type CleanupPreview  L160:type CleanupRequest  L166:type CleanupResult  L176:type Manager  L187:type state  L217:type sample  L222:type localChannel  L227:NewManager  L240:type historyCandidate  L245:Manager.restoreHistory  L293:Manager.restoreState  L423:Manager.pruneTerminalLocked  L439:validDownloadID  L453:Manager.getConfigSnapshot  L459:Manager.getStorageRootsSnapshot  L465:Manager.maybeRefreshConfig  L489:Manager.Start  L508:Manager.Resume  L532:Manager.Cancel  L553:Manager.List …</sub>
+- **manager_test.go** (657 ln)
+  <sub>L46:TestSanitizeFileName  L53:TestRetryPendingSkipsDone  L64:TestMergePartsOrder  L87:TestMergePartsPreservesExistingOutput  L113:TestMergePartsDoesNotPublishPartialOutput  L147:TestPrepareUsesUniqueOutputPath  L182:TestListAndGetCloneChannels  L229:TestListNewestFirst  L241:TestNewManagerRestoresCompletedAndInterruptedDownloads  L280:TestNewManagerRepairsMissingCompletedPart  L300:TestNewManagerIgnoresManifestTargetOutsideReceiveRoot  L315:TestPruneTerminalJobsKeepsNewestAndActive  L339:historyManifest  L368:writeHistoryManifest  L377:TestCleanupPreviewAndCleanup  L446:TestForgetRemovesResumeStateButPreservesFinalOutput  L481:TestForgetRejectsActiveAndUnsafeDownload  L499:TestPrepareRejectsOversizedChunkBeforeNetwork  L506:TestProbeDownload_HEAD_OK  L533:TestProbeDownload_HEAD_Fail_GET_Range_206_OK  L570:TestProbeDownload_HEAD_Fail_GET_Range_200_Fail  L592:TestProbeDownload_HEAD_Fail_GET_Range_206_No_ContentRange  L614:TestProbeDownload_HEAD_Fail_GET_Fail  L635:TestChunkTimeoutByMode …</sub>
+

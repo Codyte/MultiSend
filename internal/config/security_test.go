@@ -5,8 +5,8 @@ import "testing"
 func TestGenerateSecretUniqueAndNonEmpty(t *testing.T) {
 	a := GenerateSecret()
 	b := GenerateSecret()
-	if a == "" || b == "" {
-		t.Fatal("secret must not be empty")
+	if len(a) != 64 || len(b) != 64 {
+		t.Fatalf("secret must contain 256 bits encoded as hex: len(a)=%d len(b)=%d", len(a), len(b))
 	}
 	if a == b {
 		t.Fatal("secrets must be unique")

@@ -1,5 +1,25 @@
 package config
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L37    GenerateSecret
+//   L47    Config.SecretBytes
+//   L60    Config.AuthSecret
+//   L67    type SelectedPorts
+//   L74    type Config
+//   L126   NormalizeInterfacePolicy
+//   L135   DefaultConfig
+//   L189   NormalizeDownloadPipelineMode
+//   L198   NormalizeDownloadChannelStrategy
+//   L207   NormalizePullFolderResult
+//   L216   ConfigPath
+//   L224   LoadOrCreate
+//   L257   LoadIfExists
+//   L280   Save
+//   L313   migrateLegacyConfig
+//   L465   backupConfig
+// ======================= END NAV INDEX =======================
+
 import (
 	"crypto/rand"
 	"encoding/hex"
@@ -10,17 +30,15 @@ import (
 	"strings"
 	"time"
 
-	"lab/multinet/internal/ports"
+	"github.com/Codyte/MultiSend/internal/ports"
 )
 
 // GenerateSecret returns a fresh 256-bit hex secret for node authentication.
 func GenerateSecret() string {
 	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		// crypto/rand failure is fatal-grade; fall back to a time seed so the node
-		// still boots, but such a value should never be relied on in practice.
-		return hex.EncodeToString([]byte(fmt.Sprintf("fallback-%d", time.Now().UnixNano())))
-	}
+	// Supported Go versions fail closed if the operating-system CSPRNG is
+	// unavailable; never substitute predictable entropy for an auth secret.
+	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
 }
 
@@ -216,7 +234,7 @@ func LoadOrCreate() (Config, string, error) {
 		if err != nil {
 			return Config{}, path, err
 		}
-		var cfg Config
+		cfg := DefaultConfig()
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return Config{}, path, err
 		}
@@ -251,7 +269,7 @@ func LoadIfExists() (Config, string, bool, error) {
 	if err != nil {
 		return Config{}, path, true, err
 	}
-	var cfg Config
+	cfg := DefaultConfig()
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return Config{}, path, true, err
 	}
@@ -260,14 +278,36 @@ func LoadIfExists() (Config, string, bool, error) {
 }
 
 func Save(path string, cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	tmp, err := os.CreateTemp(dir, ".multisend-config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func migrateLegacyConfig(cfg *Config) bool {
@@ -395,18 +435,6 @@ func migrateLegacyConfig(cfg *Config) bool {
 	if cfg.IgnoredInterfaces == nil {
 		cfg.IgnoredInterfaces = []string{}
 		migrated = true
-	}
-	if !cfg.AllowNewInterfaces {
-		cfg.AllowNewInterfaces = def.AllowNewInterfaces
-	}
-	if !cfg.IgnoreVirtual {
-		cfg.IgnoreVirtual = def.IgnoreVirtual
-	}
-	if !cfg.IgnoreVPN {
-		cfg.IgnoreVPN = def.IgnoreVPN
-	}
-	if !cfg.IgnoreLinkLocal {
-		cfg.IgnoreLinkLocal = def.IgnoreLinkLocal
 	}
 	mode := NormalizeDownloadPipelineMode(cfg.DownloadPipelineMode)
 	if cfg.DownloadPipelineMode != mode {

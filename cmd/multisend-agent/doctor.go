@@ -1,5 +1,40 @@
 package main
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L54    type doctorReporter
+//   L61    doctorReporter.line
+//   L64    doctorReporter.Pass
+//   L65    doctorReporter.Warn
+//   L66    doctorReporter.Fail
+//   L67    doctorReporter.Skip
+//   L69    RunDoctor
+//   L93    type runtimeState
+//   L100   readRuntimeState
+//   L115   printDoctorHeader
+//   L138   printDoctorPaths
+//   L168   printInstalledFiles
+//   L188   validateAndPrintConfig
+//   L259   redactDiagnosticSecrets
+//   L283   printAgentProcess
+//   L321   testLocalAPI
+//   L352   printFirewallChecks
+//   L399   firewallRuleVisibleViaNetsh
+//   L404   printAutostart
+//   L425   printExplorerContext
+//   L475   printInterfaces
+//   L493   printSummary
+//   L509   readConfigForDoctor
+//   L532   fileVersion
+//   L541   runPowerShell
+//   L557   decodeJSONList
+//   L573   regQueryValue
+//   L583   regQueryDefault
+//   L592   runReg
+//   L608   parseRegValue
+//   L625   parseRegDefault
+// ======================= END NAV INDEX =======================
+
 import (
 	"bytes"
 	"encoding/json"
@@ -12,8 +47,8 @@ import (
 	"strings"
 	"time"
 
-	"lab/multinet/internal/config"
-	"lab/multinet/internal/ifmonitor"
+	"github.com/Codyte/MultiSend/internal/config"
+	"github.com/Codyte/MultiSend/internal/ifmonitor"
 )
 
 type doctorReporter struct {
@@ -173,7 +208,7 @@ func validateAndPrintConfig(r *doctorReporter, cfg config.Config, exists bool, r
 		fmt.Println()
 		return
 	}
-	norm, _ := json.MarshalIndent(anyObj, "", "  ")
+	norm, _ := json.MarshalIndent(redactDiagnosticSecrets(anyObj), "", "  ")
 	fmt.Println(string(norm))
 
 	if cfg.SchemaVersion >= 1 {
@@ -201,6 +236,7 @@ func validateAndPrintConfig(r *doctorReporter, cfg config.Config, exists bool, r
 	validatePort("transfer_port(selected)", cfg.SelectedPorts.Transfer)
 	validatePort("discovery_port(selected)", cfg.SelectedPorts.Discovery)
 	validatePort("local_api_port(selected)", cfg.SelectedPorts.LocalAPI)
+	validatePort("control_port(selected)", cfg.SelectedPorts.Control)
 	validatePort("transfer_port_range.start", cfg.TransferPortRange.Start)
 	validatePort("transfer_port_range.end", cfg.TransferPortRange.End)
 	validatePort("discovery_port_range.start", cfg.DiscoveryPortRange.Start)
@@ -218,6 +254,30 @@ func validateAndPrintConfig(r *doctorReporter, cfg config.Config, exists bool, r
 		r.Pass("allowed_interface_types=" + strings.Join(cfg.AllowedIfTypes, ","))
 	}
 	fmt.Println()
+}
+
+func redactDiagnosticSecrets(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "password") {
+				out[key] = "[redacted]"
+				continue
+			}
+			out[key] = redactDiagnosticSecrets(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = redactDiagnosticSecrets(child)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func printAgentProcess(r *doctorReporter) {
@@ -301,16 +361,23 @@ func printFirewallChecks(r *doctorReporter) {
 		LocalPort     string `json:"LocalPort"`
 		RemoteAddress string `json:"RemoteAddress"`
 	}
-	script := `$names=@('MultiSend Agent TCP 56200-56210','MultiSend Discovery UDP 56211-56220','MultiSend Agent TCP 55202','MultiSend Discovery UDP 55203');$out=@();foreach($n in $names){$r=Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue;if($r){$p=$r|Get-NetFirewallPortFilter;$a=$r|Get-NetFirewallAddressFilter;$out += [pscustomobject]@{DisplayName=$r.DisplayName;Enabled=[string]$r.Enabled;Profile=[string]$r.Profile;Direction=[string]$r.Direction;Action=[string]$r.Action;Protocol=[string]$p.Protocol;LocalPort=[string]$p.LocalPort;RemoteAddress=[string]$a.RemoteAddress}}};$out|ConvertTo-Json -Depth 5 -Compress`
+	currentNames := []string{"MultiSend Agent TCP 56200-56210", "MultiSend Discovery UDP 56211-56220", "MultiSend Control TCP 56231-56240"}
+	script := `$names=@('MultiSend Agent TCP 56200-56210','MultiSend Discovery UDP 56211-56220','MultiSend Control TCP 56231-56240','MultiSend Agent TCP 55202','MultiSend Discovery UDP 55203');$out=@();foreach($n in $names){$r=Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue;if($r){$p=$r|Get-NetFirewallPortFilter;$a=$r|Get-NetFirewallAddressFilter;$out += [pscustomobject]@{DisplayName=$r.DisplayName;Enabled=[string]$r.Enabled;Profile=[string]$r.Profile;Direction=[string]$r.Direction;Action=[string]$r.Action;Protocol=[string]$p.Protocol;LocalPort=[string]$p.LocalPort;RemoteAddress=[string]$a.RemoteAddress}}};$out|ConvertTo-Json -Depth 5 -Compress`
 	out, err := runPowerShell(script)
-	if err != nil {
-		r.Skip("firewall query unavailable")
-		fmt.Println()
-		return
-	}
 	rows := decodeJSONList[fwRow](out)
-	if len(rows) == 0 {
-		r.Warn("firewall rules not found")
+	if err != nil || len(rows) == 0 {
+		visible := 0
+		for _, name := range currentNames {
+			if firewallRuleVisibleViaNetsh(name) {
+				r.Pass(name + " present (details require elevated doctor)")
+				visible++
+			} else {
+				r.Warn(name + " not found")
+			}
+		}
+		if visible > 0 {
+			r.Skip("detailed firewall properties unavailable without elevation")
+		}
 		fmt.Println()
 		return
 	}
@@ -327,6 +394,11 @@ func printFirewallChecks(r *doctorReporter) {
 		}
 	}
 	fmt.Println()
+}
+
+func firewallRuleVisibleViaNetsh(name string) bool {
+	out, err := exec.Command("netsh.exe", "advfirewall", "firewall", "show", "rule", "name="+name).CombinedOutput()
+	return err == nil && strings.Contains(strings.ToLower(string(out)), strings.ToLower(name))
 }
 
 func printAutostart(r *doctorReporter) {
@@ -378,7 +450,23 @@ func printExplorerContext(r *doctorReporter) {
 				r.Warn("command does not point to multisend-launcher.ps1")
 			}
 		} else {
-			r.Warn(fmt.Sprintf("%s command missing", k.label))
+			children := []string{"send", "download", "receive", "settings"}
+			found := 0
+			for _, child := range children {
+				childCmd, childOK := regQueryDefault(k.hive, k.path+`\shell\`+child+`\command`)
+				if !childOK || strings.TrimSpace(childCmd) == "" {
+					continue
+				}
+				found++
+				if strings.Contains(strings.ToLower(childCmd), strings.ToLower(`multisend-launcher.ps1`)) {
+					r.Pass(fmt.Sprintf("%s submenu %s uses multisend-launcher.ps1", k.label, child))
+				} else {
+					r.Warn(fmt.Sprintf("%s submenu %s does not use multisend-launcher.ps1", k.label, child))
+				}
+			}
+			if found == 0 {
+				r.Warn(fmt.Sprintf("%s has no direct or submenu commands", k.label))
+			}
 		}
 	}
 	fmt.Println()

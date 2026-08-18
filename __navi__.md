@@ -1,23 +1,65 @@
-# __navi__ · `MultiSend/` — public tracked scripts → symbols at exact line numbers
-<!-- navindex · 2026-06-19 · public-prep manual refresh; local ignored files omitted -->
-↑ repo tree: [`../__navi__.md`](../__navi__.md)
+# __navi__ · repo tree — 77 files in 20 folders
+<!-- navindex · 2026-08-18 · DO NOT EDIT BY HAND; regen via navindex skill -->
 
-- **install-multisend-node-v5.ps1** (516 ln)
-  <sub>L97:Write-Utf8NoBomFile  L104:Write-Log  L105:Write-Check  L106:Write-Section  L107:Write-Step  L108:Write-Pass  L109:Write-Skip  L110:Write-WarnLine  L112:Test-IsAdministrator  L117:Ensure-Admin  L118:Ensure-Mode  L123:Get-UserConfigPath  L124:Get-DefaultReceiveRoot  L130:Ensure-Directories  L135:Save-State  L136:Read-State  L137:Find-Binary  L138:Test-AgentRunning  L139:Get-AgentProcesses  L141:Install-Binaries  L149:Install-ExtensionFiles  L160:New-NodeConfig  L207:Ensure-Firewall  L257:Set-AutoStart …</sub>
-- **multisend-benchmark-abc.ps1** (204 ln)
-  <sub>L14:Write-Step  L19:Get-ApiBase  L30:Set-DownloadConfig  L60:Wait-For-Completion  L97:Start-ScenarioRun  L187:Avg</sub>
-- **multisend-download-ui.ps1** (1104 ln)
-  <sub>L34:Write-UiLog  L42:Test-ApiHealth  L52:Resolve-ApiBase  L98:Invoke-ApiJson  L128:Normalize-ProtocolUrl  L151:Test-DownloadUrl  L162:Test-PullSourceUrl  L171:Normalize-DownloadUrlInput  L186:Get-OptionalPropValue  L199:Get-InitialDownloadUrl  L404:Get-SelectedJobId  L415:Set-UiState  L511:Update-ActionButtons  L562:Update-DownloadList  L601:Get-SelectedJobIds  L610:Refresh-SelectedJob  L692:Refresh-SendJob</sub>
-- **multisend-launcher.ps1** (531 ln)
-  <sub>L40:Write-LauncherLog  L53:Enter-LauncherCoordinator  L64:Exit-LauncherCoordinator  L72:Test-AgentApi  L82:Get-LocalApiCandidates  L112:Resolve-AgentApi  L129:Format-Bytes  L137:Resolve-InputFilePaths  L160:Add-LaunchQueueItem  L169:Collect-QueuedPaths  L190:New-StagedZip  L218:Remove-StagingSafe  L230:Open-UnifiedSendMonitor  L254:Open-DownloadManager  L271:Show-SendConfigDialog  L397:Get-TransferPortHint  L422:Resolve-ManualPeerAddress</sub>
-- **multisend-settings-ui.ps1** (442 ln)
-  <sub>L29:Read-Config  L36:Write-Config  L44:Backup-Config  L53:Restore-Config  L60:Join-List  L66:Split-List  L72:Get-PropValue  L92:Add-Page  L104:New-Label  L105:New-Box  L106:New-Check  L107:Add-LineToMultilineBox  L115:Remove-LineFromMultilineBox  L245:Get-AgentApiPort  L261:Load-Interfaces</sub>
-- **multisend-test-1gb-log.ps1** (182 ln)
-  <sub>L13:Write-Step  L18:Get-ApiBase  L29:Resolve-LauncherPath  L40:Save-SystemSnapshot  L53:Get-Jobs  L58:Wait-NewJobId  L76:Wait-JobDone</sub>
-- **multisend-triage-batch.ps1** (205 ln)
-  <sub>L11:New-ReportDir  L19:Save-Text  L24:Save-Json  L30:Run-CmdCapture  L40:Resolve-ApiBase  L80:Wait-JobTerminal</sub>
-- **multisend-triage-blindado.ps1** (776 ln)
-  <sub>L89:Save-Utf8NoBomText  L102:Save-Json  L111:Read-TextUtf8  L120:Read-JsonFileSafe  L132:Sanitize-ConfigFile  L150:Get-AgentExeCandidates  L167:Test-AgentProcessRunning  L171:Start-Agent  L182:Stop-Agent  L189:Get-LocalApiPortsFromState  L218:Invoke-JsonRequest  L280:Test-AgentHealth  L290:Resolve-AgentApiBase  L313:Get-RemoteHostAndPort  L363:Convert-Ipv4ToUInt32  L370:Test-SameSubnet  L389:Get-LocalInterfaces  L404:Select-BestPeer  L450:Select-LocalInterfaceForPeer  L466:Ensure-ManualInterfaceConfig  L482:New-ProbeFile  L493:Invoke-SendTransfer  L549:Wait-JobTerminal  L585:Test-RetryableNetworkError  L601:Record-Evidence</sub>
-- **rebuild-multisend-setup.ps1** (101 ln)
-  <sub>L8:Write-Step  L13:Resolve-IsccPath</sub>
+Universal index: every folder below -> the files it holds (names only). A `→ __navi__.md` marker means that folder has a symbol map — open `<that path>/__navi__.md` for exact line numbers (2 reads total: this tree -> folder map).
+
+## `./` (8 files) → __navi__.md
+CONTRIBUTING.md(24)  README.md(86)  SECURITY.md(55)  install-multisend-node-v5.ps1(613)  multisend-download-ui.ps1(18)  multisend-launcher.ps1(600)  multisend-settings-ui.ps1(580)  rebuild-multisend-setup.ps1(117)
+
+## `browser-extension/` (3 files) → __navi__.md
+README.md(11)  background.js(26)  manifest.json(14)
+
+## `cmd/multirecv/` (2 files) → __navi__.md
+main.go(172)  main_test.go(151)
+
+## `cmd/multisend/` (2 files) → __navi__.md
+main.go(407)  main_test.go(97)
+
+## `cmd/multisend-agent/` (16 files) → __navi__.md
+config_api.go(332)  config_api_test.go(163)  doctor.go(639)  doctor_test.go(26)  download_smoke.go(348)  history.go(581)  history_test.go(286)  http_api.go(159)  http_api_test.go(124)  lab_smoke.go(531)  lab_smoke_test.go(41)  main.go(2852)  main_test.go(587)  smoke_cleanup.go(123)  smoke_cleanup_test.go(81)  web.go(24)
+
+## `cmd/multisend-agent/web/` (3 files) → __navi__.md
+app.js(717)  index.html(341)  styles.css(487)
+
+## `docs/` (10 files)
+BLINDADO-OPERACAO.md(23)  CONFIG_API.md(120)  DOWNLOAD_HISTORY.md(66)  INSTALLATION.md(62)  OPERATION_HISTORY.md(63)  PUBLICATION_CHECKLIST.md(35)  QUALITY_AUDIT.md(86)  SMOKE_TESTS.md(48)  SPLIT_CLI.md(73)  UI_REFORMULATION.md(193)
+
+## `internal/chunk/` (2 files) → __navi__.md
+chunk.go(69)  chunk_test.go(68)
+
+## `internal/config/` (3 files) → __navi__.md
+config.go(469)  config_test.go(130)  security_test.go(59)
+
+## `internal/discovery/` (2 files) → __navi__.md
+discovery.go(582)  discovery_test.go(94)
+
+## `internal/download/` (2 files) → __navi__.md
+manager.go(2005)  manager_test.go(657)
+
+## `internal/ifmonitor/` (2 files) → __navi__.md
+ifmonitor.go(172)  ifmonitor_test.go(62)
+
+## `internal/manifest/` (2 files) → __navi__.md
+manifest.go(240)  manifest_test.go(79)
+
+## `internal/netif/` (2 files) → __navi__.md
+netif.go(74)  netif_test.go(43)
+
+## `internal/ports/` (2 files) → __navi__.md
+ports.go(166)  ports_test.go(75)
+
+## `internal/proto/` (3 files) → __navi__.md
+proto.go(155)  proto_auth_test.go(73)  proto_test.go(36)
+
+## `internal/scheduler/` (2 files) → __navi__.md
+scheduler.go(141)  scheduler_test.go(94)
+
+## `internal/split/` (2 files) → __navi__.md
+split.go(13)  split_test.go(47)
+
+## `internal/transfer/` (4 files) → __navi__.md
+e2e_test.go(128)  internals_test.go(190)  sender.go(886)  sender_test.go(37)
+
+## `scripts/` (5 files) → __navi__.md
+README.md(10)  multisend-benchmark-abc.ps1(228)  multisend-test-1gb-log.ps1(204)  multisend-triage-batch.ps1(229)  multisend-triage-blindado.ps1(828)
 

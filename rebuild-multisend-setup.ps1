@@ -70,7 +70,7 @@ try {
         @{ Src = (Join-Path $repoRoot 'browser-extension\README.md'); Dst = (Join-Path $distDir 'browser-extension\README.md') }
     )
 
-    $triageSrcPrimary = Join-Path $repoRoot 'multisend-triage-blindado.ps1'
+    $triageSrcPrimary = Join-Path $repoRoot 'scripts\multisend-triage-blindado.ps1'
     if (Test-Path -LiteralPath $triageSrcPrimary) {
         $syncMap += @{ Src = $triageSrcPrimary; Dst = (Join-Path $distDir 'multisend-triage-blindado.ps1') }
     }

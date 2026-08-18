@@ -11,31 +11,45 @@ Target public repository: `Codyte/MultiSend`.
 - Download HTTP/HTTPS files using ranged chunks.
 - Track progress, retries, manifests, cancel/resume, and per-channel telemetry.
 - Use detected interfaces such as Ethernet, Wi-Fi, and USB Ethernet.
+- Monitor and start operations from the embedded responsive UI at the agent's local `/ui/` route.
 - Install as a Windows node with Explorer integration, protocol handling, settings UI, and diagnostics.
 
 ## Repository Layout
 
-- `MultiSend/cmd/multisend-agent`: local/control API, receiver, LAN pull orchestration, diagnostics.
-- `MultiSend/internal/transfer`: P2P sender engine.
-- `MultiSend/internal/download`: HTTP/HTTPS download manager.
-- `MultiSend/internal/discovery`: LAN peer discovery.
-- `MultiSend/internal/config`: node configuration and migration defaults.
-- `MultiSend/*.ps1`: launcher, transfer UI, settings UI, installer helper, triage scripts.
-- `MultiSend/dist`: generated installer output; only `MultiSendSetup.iss` is versioned.
+- `cmd/`: Go entrypoints for the agent, sender, and receiver.
+- `internal/`: transfer, download, discovery, configuration, protocol, and support packages.
+- `scripts/`: benchmarks, diagnostics, and manual test utilities.
+- `browser-extension/`: optional browser protocol helper.
+- `dist/`: installer definition and ignored generated outputs.
+- Root PowerShell scripts: runtime payload, installer helper, and setup rebuild entrypoint.
+
+The incremental plan for replacing the PowerShell WinForms screens with an embedded web UI is
+documented in [`docs/UI_REFORMULATION.md`](docs/UI_REFORMULATION.md).
+The redacted configuration contract is documented in [`docs/CONFIG_API.md`](docs/CONFIG_API.md).
+Download history recovery and retention are documented in
+[`docs/DOWNLOAD_HISTORY.md`](docs/DOWNLOAD_HISTORY.md).
+LAN send and pull recovery are documented in
+[`docs/OPERATION_HISTORY.md`](docs/OPERATION_HISTORY.md).
+Diagnostic and self-cleaning smoke tests are documented in
+[`docs/SMOKE_TESTS.md`](docs/SMOKE_TESTS.md).
+Installation, repair, firewall scope, persistence, and rollback are documented in
+[`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+The restricted diagnostic split CLIs are documented in
+[`docs/SPLIT_CLI.md`](docs/SPLIT_CLI.md), and the current test/coverage audit is in
+[`docs/QUALITY_AUDIT.md`](docs/QUALITY_AUDIT.md).
 
 ## Build
 
 Prerequisites:
 
 - Windows.
-- Go matching `MultiSend/go.mod`.
+- Go matching `go.mod`.
 - PowerShell 5+.
 - Inno Setup 6 when rebuilding the installer.
 
 Run:
 
 ```powershell
-cd MultiSend
 go test ./...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\rebuild-multisend-setup.ps1
 ```
@@ -43,7 +57,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\rebuild-multisend-setu
 The installer is generated at:
 
 ```text
-MultiSend/dist/MultiSendSetup.exe
+dist/MultiSendSetup.exe
 ```
 
 ## Diagnostics
@@ -56,17 +70,6 @@ Runtime logs are written locally, not into the repository:
 - Installer: `C:\ProgramData\MultiSend\logs\install.log`
 
 The agent also exposes `agent_log_path` through `/health` and `runtime.json`.
-
-## Optional External Services
-
-The memory package contains optional OpenAI embedding support. It is disabled by default and only runs when both environment variables are set:
-
-```text
-MULTISEND_ENABLE_OPENAI_EMBEDDINGS=true
-OPENAI_API_KEY=<key>
-```
-
-Do not commit API keys or local environment files.
 
 ## Public Release Status
 

@@ -1,5 +1,23 @@
 package main
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L36    type labRuntimeState
+//   L41    type smokeJob
+//   L66    type smokeResult
+//   L72    smokeResult.passf
+//   L80    smokeResult.warnf
+//   L82    runLabSmoke
+//   L362   readRuntime
+//   L393   ensureDeterministicFile
+//   L422   apiGET
+//   L438   apiPOST
+//   L455   canDial
+//   L464   waitForSmokeReceiver
+//   L488   printLabSummary
+//   L501   printFailedChunkDetails
+// ======================= END NAV INDEX =======================
+
 import (
 	"bytes"
 	"encoding/json"
@@ -12,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"lab/multinet/internal/config"
+	"github.com/Codyte/MultiSend/internal/config"
 )
 
 type labRuntimeState struct {
@@ -101,18 +119,27 @@ func runLabSmoke() int {
 		return 1
 	}
 	labRoot := filepath.Join(receivePath, "_lab")
-	sendDir := filepath.Join(labRoot, "send")
-	recvDir := filepath.Join(labRoot, "receive")
-	manDir := filepath.Join(labRoot, "manifests")
-	logDir := filepath.Join(labRoot, "logs")
-	tmpDir := filepath.Join(labRoot, "tmp")
+	runsRoot := filepath.Join(labRoot, "receive", "runs")
+	runDir := filepath.Join(runsRoot, fmt.Sprintf("run-%d", time.Now().UnixNano()))
+	sendDir := filepath.Join(runDir, "send")
+	recvDir := filepath.Join(runDir, "receive")
 	foldersOK := true
-	for _, p := range []string{labRoot, sendDir, recvDir, manDir, logDir, tmpDir} {
+	for _, p := range []string{runsRoot, sendDir, recvDir} {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			foldersOK = false
 		}
 	}
 	fmt.Printf("%s lab folders\n", res.passf(foldersOK))
+	jobID := ""
+	manifestPath := ""
+	cleanupPending := true
+	defer func() {
+		if cleanupPending {
+			if err := cleanupLabSmokeArtifacts(apiBase, jobID, manifestPath, runDir, runsRoot); err != nil {
+				fmt.Println("WARN: best-effort lab cleanup:", err)
+			}
+		}
+	}()
 
 	fmt.Println()
 	fmt.Println("[Test file]")
@@ -124,6 +151,7 @@ func runLabSmoke() int {
 		fmt.Println("size:", size)
 		fmt.Println("reused/recreated: error")
 		fmt.Println("error:", err)
+		res.fail++
 		printLabSummary(res)
 		return 1
 	}
@@ -147,12 +175,16 @@ func runLabSmoke() int {
 	var sendResp map[string]string
 	if err := apiPOST(apiBase+"/send", sendReq, &sendResp); err != nil {
 		fmt.Println("FAIL: send failed:", err)
+		res.fail++
 		printLabSummary(res)
 		return 1
 	}
-	jobID := sendResp["job_id"]
+	jobID = sendResp["job_id"]
 	if jobID == "" {
+		cleanupPending = false
 		fmt.Println("FAIL: send did not return job_id")
+		fmt.Println("run artifacts preserved because an active job could not be identified:", runDir)
+		res.fail++
 		printLabSummary(res)
 		return 1
 	}
@@ -173,6 +205,7 @@ func runLabSmoke() int {
 		var st smokeJob
 		if err := apiGET(apiBase+"/jobs/"+jobID, &st); err != nil {
 			fmt.Println("FAIL: get job:", err)
+			res.fail++
 			printLabSummary(res)
 			return 1
 		}
@@ -183,6 +216,7 @@ func runLabSmoke() int {
 			fmt.Println("job.message:", st.Message)
 		}
 		if st.ManifestPath != "" {
+			manifestPath = st.ManifestPath
 			fmt.Println("manifest_path:", st.ManifestPath)
 		}
 		if st.ChunksFailed > 0 && st.BytesSent == 0 {
@@ -266,6 +300,7 @@ func runLabSmoke() int {
 		var st smokeJob
 		if err := apiGET(apiBase+"/jobs/"+jobID, &st); err != nil {
 			fmt.Println("FAIL: get job during resume:", err)
+			res.fail++
 			printLabSummary(res)
 			return 1
 		}
@@ -287,6 +322,7 @@ func runLabSmoke() int {
 		doneState.ResumeSupported &&
 		doneState.ManifestPath != ""
 	if doneState.ManifestPath != "" {
+		manifestPath = doneState.ManifestPath
 		if _, err := os.Stat(doneState.ManifestPath); err != nil {
 			resumeOK = false
 		}
@@ -295,10 +331,26 @@ func runLabSmoke() int {
 
 	fmt.Println()
 	fmt.Println("[Receiver]")
-	sessionPath, recvManifest, chunkCount := findLatestSession(recvDir)
-	fmt.Println("receive/session path:", sessionPath)
-	fmt.Println("receiver manifest path:", recvManifest)
-	fmt.Println("chunk files count:", chunkCount)
+	receiver, receiverErr := waitForSmokeReceiver(apiBase, recvDir, 30*time.Second)
+	fmt.Println("receive/session path:", receiver.SessionDir)
+	fmt.Println("receiver manifest path:", receiver.ManifestPath)
+	fmt.Println("receiver status:", receiver.Status)
+	receiverOK := receiverErr == nil && receiver.Status == "done" && receiver.FinalOutputPath != ""
+	if receiverOK {
+		st, err := os.Stat(receiver.FinalOutputPath)
+		receiverOK = err == nil && st.Size() == size
+	}
+	if receiverErr != nil {
+		fmt.Println("receiver error:", receiverErr)
+	}
+	fmt.Printf("%s receiver validation\n", res.passf(receiverOK))
+
+	cleanupErr := cleanupLabSmokeArtifacts(apiBase, jobID, manifestPath, runDir, runsRoot)
+	cleanupPending = false
+	if cleanupErr != nil {
+		fmt.Println("cleanup error:", cleanupErr)
+	}
+	fmt.Printf("%s artifact cleanup\n", res.passf(cleanupErr == nil))
 
 	printLabSummary(res)
 	if res.fail > 0 {
@@ -409,42 +461,28 @@ func canDial(port int) bool {
 	return true
 }
 
-func findLatestSession(root string) (string, string, int) {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return "", "", 0
+func waitForSmokeReceiver(apiBase, receiveRoot string, timeout time.Duration) (receiverSession, error) {
+	deadline := time.Now().Add(timeout)
+	var latest receiverSession
+	for time.Now().Before(deadline) {
+		var sessions []receiverSession
+		if err := apiGET(apiBase+"/receiver/sessions", &sessions); err != nil {
+			return receiverSession{}, err
+		}
+		for _, session := range sessions {
+			if pathWithin(session.SessionDir, receiveRoot) {
+				latest = session
+				if session.Status == "done" {
+					return session, nil
+				}
+				if session.Status == "failed" || session.Status == "canceled" {
+					return session, fmt.Errorf("receiver ended with status %s: %s", session.Status, session.Message)
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	var latest string
-	var latestTime time.Time
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(latestTime) {
-			latestTime = info.ModTime()
-			latest = filepath.Join(root, e.Name())
-		}
-	}
-	if latest == "" {
-		return "", "", 0
-	}
-	files, _ := os.ReadDir(latest)
-	count := 0
-	manifestPath := ""
-	for _, f := range files {
-		n := strings.ToLower(f.Name())
-		if strings.HasSuffix(n, ".chunk001") || strings.Contains(n, ".chunk") {
-			count++
-		}
-		if n == "manifest.json" {
-			manifestPath = filepath.Join(latest, f.Name())
-		}
-	}
-	return latest, manifestPath, count
+	return latest, fmt.Errorf("receiver did not finish within %s", timeout)
 }
 
 func printLabSummary(res *smokeResult) {

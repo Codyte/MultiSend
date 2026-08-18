@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"lab/multinet/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/manifest"
 )
 
 func TestChoosesFastestWithSameInflight(t *testing.T) {

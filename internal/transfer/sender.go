@@ -1,5 +1,50 @@
 package transfer
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L75    type localChannel
+//   L80    type PeerTarget
+//   L84    type SendOptions
+//   L99    type InterfaceBinding
+//   L105   type SendResult
+//   L110   type ProgressSnapshot
+//   L127   type ChannelDetail
+//   L138   type ProgressFunc
+//   L140   SendFileSplit
+//   L145   SendFileSplitWithProgress
+//   L150   SendFileSplitWithProgressCtx
+//   L155   SendFileSplitWithResultCtx
+//   L407   buildIdentity
+//   L415   SenderIdentity
+//   L442   senderManifestPath
+//   L451   loadOrCreateManifest
+//   L475   manifestComplete
+//   L487   newManifest
+//   L512   pathDir
+//   L514   channelStatesDynamic
+//   L533   retryablePending
+//   L544   startProgressLoop
+//   L602   buildDynamicChannels
+//   L637   findChannel
+//   L646   type channelStats
+//   L651   channelStats.set
+//   L657   channelStats.get
+//   L666   channelStats.snapshot
+//   L678   channelStats.updateFromChannels
+//   L699   sendChunkCtx
+//   L762   isLoopbackTarget
+//   L775   type progressReader
+//   L783   progressReader.counter
+//   L793   progressReader.Read
+//   L806   progressReader.rollback
+//   L819   type manifestSaver
+//   L826   newManifestSaver
+//   L831   manifestSaver.save
+//   L844   manifestSaver.flush
+//   L855   hashSection
+//   L867   contentFingerprint
+// ======================= END NAV INDEX =======================
+
 import (
 	"context"
 	"crypto/sha256"
@@ -15,10 +60,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"lab/multinet/internal/chunk"
-	"lab/multinet/internal/manifest"
-	"lab/multinet/internal/proto"
-	"lab/multinet/internal/scheduler"
+	"github.com/Codyte/MultiSend/internal/chunk"
+	"github.com/Codyte/MultiSend/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/proto"
+	"github.com/Codyte/MultiSend/internal/scheduler"
 )
 
 // maxAttemptsPerChunk bounds retries for a LAN peer transfer. It is deliberately
@@ -365,6 +410,35 @@ func buildIdentity(absPath string, size int64, mod time.Time, target string, chu
 	return hex.EncodeToString(s[:16])
 }
 
+// SenderIdentity returns the identity used to select a resumable sender
+// manifest for the current file contents and target.
+func SenderIdentity(filePath, target string, chunkSize int64) (string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(absPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("source is not a file")
+	}
+	if chunkSize <= 0 {
+		chunkSize = chunk.AutoChunkSize(info.Size())
+	}
+	fingerprint, err := contentFingerprint(f, info.Size())
+	if err != nil {
+		return "", err
+	}
+	return buildIdentity(absPath, info.Size(), info.ModTime(), target, chunkSize, fingerprint), nil
+}
+
 func senderManifestPath(identity string) string {
 	base := os.Getenv("USERPROFILE")
 	if base == "" {
@@ -383,7 +457,7 @@ func loadOrCreateManifest(path, identity, absPath, fileName string, st os.FileIn
 				existing.ActivateResume(maxAttemptsPerChunk)
 				return existing, nil
 			}
-			if existing.HasCanceledChunks() {
+			if existing.HasCanceledChunks() || manifestComplete(existing) {
 				return newManifest(identity, fileName, st.Size(), chunkSize, targetAddr, absPath, st.ModTime(), plan, now), nil
 			}
 			return existing, nil
@@ -396,6 +470,18 @@ func loadOrCreateManifest(path, identity, absPath, fileName string, st os.FileIn
 		return nil, fmt.Errorf("resume requested but manifest not found")
 	}
 	return newManifest(identity, fileName, st.Size(), chunkSize, targetAddr, absPath, st.ModTime(), plan, now), nil
+}
+
+func manifestComplete(m *manifest.Manifest) bool {
+	if m == nil || len(m.Chunks) == 0 {
+		return false
+	}
+	for _, chunk := range m.Chunks {
+		if chunk.Status != manifest.StatusDone {
+			return false
+		}
+	}
+	return true
 }
 
 func newManifest(identity, fileName string, totalBytes, chunkSize int64, targetAddr, absPath string, modTime time.Time, plan chunk.Plan, now time.Time) *manifest.Manifest {

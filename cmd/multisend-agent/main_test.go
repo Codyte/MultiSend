@@ -1,5 +1,33 @@
 package main
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L49    TestControlJSONClientsSendBearerToken
+//   L74    TestControlJSONClientRejectsOversizedResponse
+//   L87    TestControlAPITokenOnlyWhenAuthRequired
+//   L98    TestControlAuthFailsClosedAndAcceptsCaseInsensitiveScheme
+//   L115   TestRemoteSendPathAllowedResolvesSymlinkEscape
+//   L143   TestStartSendRejectsInvalidChunkSizeBeforeCreatingJob
+//   L157   TestSendRejectsLabReceivePathWhenLabFalse
+//   L184   TestSendRejectsRelativePathAndInvalidChunkSize
+//   L214   TestSendRejectsUnsafeCleanupPath
+//   L228   TestPullRejectsInvalidChunkSizeBeforeDiscovery
+//   L238   TestInterfacesHandlerPayload
+//   L283   TestWriteAPIErrorReturnsJSON
+//   L305   TestFormatRemoteAPIErrorIncludesRequestID
+//   L315   TestMergeReceiverChunksOrdersByIndex
+//   L344   TestValidateReceiverFinalSize
+//   L358   TestCleanupReceiverChunksOnlyRemovesChunks
+//   L386   TestFinalizeReceiverSessionIdempotent
+//   L430   TestUpdateReceiverManifestSerializesConcurrentChunks
+//   L476   TestValidateReceiverPathRejectsOutside
+//   L484   TestParseFileSourceAcceptsUNCAndFileURL
+//   L501   TestValidateOutputUnderReceiveReturnsRelativeDestination
+//   L516   TestPrepareRemoteSendSourceFolderCreatesRelativeZip
+//   L551   TestReceiverTargetInfoForPullPublishesOutsideSession
+//   L565   TestExtractZipSafeRejectsTraversal
+// ======================= END NAV INDEX =======================
+
 import (
 	"archive/zip"
 	"bytes"
@@ -9,13 +37,122 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
-	"lab/multinet/internal/config"
-	"lab/multinet/internal/ifmonitor"
-	"lab/multinet/internal/manifest"
-	"lab/multinet/internal/proto"
+	"github.com/Codyte/MultiSend/internal/config"
+	"github.com/Codyte/MultiSend/internal/ifmonitor"
+	"github.com/Codyte/MultiSend/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/proto"
 )
+
+func TestControlJSONClientsSendBearerToken(t *testing.T) {
+	const token = "paired-node-secret"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Errorf("Authorization = %q, want bearer token", got)
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	var postResult map[string]any
+	if err := postJSON(server.URL, map[string]any{"value": 1}, &postResult, token); err != nil {
+		t.Fatalf("postJSON: %v", err)
+	}
+	var getResult map[string]any
+	if err := getJSON(server.URL, &getResult, token); err != nil {
+		t.Fatalf("getJSON: %v", err)
+	}
+	if requests != 2 || postResult["ok"] != true || getResult["ok"] != true {
+		t.Fatalf("unexpected client results: requests=%d post=%v get=%v", requests, postResult, getResult)
+	}
+}
+
+func TestControlJSONClientRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), int(maxRemoteAPIResponseBodyBytes)+1))
+	}))
+	defer server.Close()
+
+	var result map[string]any
+	err := getJSON(server.URL, &result, "")
+	if err == nil || !strings.Contains(err.Error(), "response body exceeds") {
+		t.Fatalf("expected bounded response error, got %v", err)
+	}
+}
+
+func TestControlAPITokenOnlyWhenAuthRequired(t *testing.T) {
+	a := &app{cfg: config.Config{NodeSecret: " shared-secret "}}
+	if got := a.controlAPIToken(); got != "" {
+		t.Fatalf("token must not be sent when authentication is disabled: %q", got)
+	}
+	a.cfg.RequireAuth = true
+	if got := a.controlAPIToken(); got != "shared-secret" {
+		t.Fatalf("control token = %q", got)
+	}
+}
+
+func TestControlAuthFailsClosedAndAcceptsCaseInsensitiveScheme(t *testing.T) {
+	a := &app{cfg: config.Config{RequireAuth: true}}
+	req := httptest.NewRequest(http.MethodGet, "/remote-jobs/job-1", nil)
+	if a.controlAuthOK(req) {
+		t.Fatal("authentication must fail closed when the configured secret is empty")
+	}
+	a.cfg.NodeSecret = "shared-secret"
+	req.Header.Set("Authorization", "bearer shared-secret")
+	if !a.controlAuthOK(req) {
+		t.Fatal("Bearer authentication scheme must be case-insensitive")
+	}
+	req.Header.Set("Authorization", "Bearer wrong-secret")
+	if a.controlAuthOK(req) {
+		t.Fatal("wrong bearer token must be rejected")
+	}
+}
+
+func TestRemoteSendPathAllowedResolvesSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "inside.bin")
+	if err := os.WriteFile(inside, []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: config.Config{RemoteSendRoots: []string{root}}}
+	if !a.isRemoteSendPathAllowed(inside) {
+		t.Fatal("regular file inside shared root must be allowed")
+	}
+
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.bin")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		if os.Getenv("MULTISEND_REQUIRE_SYMLINK_TEST") == "1" {
+			t.Fatalf("directory symlink required for elevated validation: %v", err)
+		}
+		t.Skipf("directory symlink unavailable on this machine: %v", err)
+	}
+	if a.isRemoteSendPathAllowed(filepath.Join(link, "secret.bin")) {
+		t.Fatal("shared-root symlink must not expose a file outside the resolved root")
+	}
+}
+
+func TestStartSendRejectsInvalidChunkSizeBeforeCreatingJob(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source.bin")
+	if err := os.WriteFile(source, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{jobsByID: map[string]*jobState{}}
+	if _, err := a.startSend(source, "", "127.0.0.1:56200", sendTargetOptions{}, 1025); err == nil {
+		t.Fatal("oversized chunk must be rejected")
+	}
+	if len(a.jobsByID) != 0 {
+		t.Fatal("invalid request must not create a job")
+	}
+}
 
 func TestSendRejectsLabReceivePathWhenLabFalse(t *testing.T) {
 	a := &app{
@@ -41,6 +178,60 @@ func TestSendRejectsLabReceivePathWhenLabFalse(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSendRejectsRelativePathAndInvalidChunkSize(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{
+			name: "relative path",
+			body: map[string]any{"file_path": `relative\file.bin`, "peer_address": "127.0.0.1:56200"},
+			want: "file_path must be absolute",
+		},
+		{
+			name: "oversized chunk",
+			body: map[string]any{"file_path": `C:\tmp\file.bin`, "peer_address": "127.0.0.1:56200", "chunk_size_mb": 1025},
+			want: "chunk_size_mb must be between 0 and 1024",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{cfg: config.Config{SelectedPorts: config.SelectedPorts{Transfer: 56200}}}
+			body, _ := json.Marshal(tt.body)
+			rr := httptest.NewRecorder()
+			a.send(rr, httptest.NewRequest(http.MethodPost, "/send", bytes.NewReader(body)))
+			if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), tt.want) {
+				t.Fatalf("expected 400 containing %q, got %d body=%s", tt.want, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestSendRejectsUnsafeCleanupPath(t *testing.T) {
+	a := &app{cfg: config.Config{SelectedPorts: config.SelectedPorts{Transfer: 56200}}}
+	body, _ := json.Marshal(map[string]any{
+		"file_path":    filepath.Join(os.TempDir(), "source.bin"),
+		"peer_address": "127.0.0.1:56200",
+		"cleanup_path": os.TempDir(),
+	})
+	rr := httptest.NewRecorder()
+	a.send(rr, httptest.NewRequest(http.MethodPost, "/send", bytes.NewReader(body)))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "invalid_cleanup_path") {
+		t.Fatalf("expected unsafe cleanup rejection, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPullRejectsInvalidChunkSizeBeforeDiscovery(t *testing.T) {
+	a := &app{}
+	body := []byte(`{"source_url":"file://peer/share/file.bin","chunk_size_mb":1025}`)
+	rr := httptest.NewRecorder()
+	a.pullsHandler(rr, httptest.NewRequest(http.MethodPost, "/pulls", bytes.NewReader(body)))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "chunk_size_mb must be between 0 and 1024") {
+		t.Fatalf("expected invalid chunk response, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -233,6 +424,52 @@ func TestFinalizeReceiverSessionIdempotent(t *testing.T) {
 	}
 	if sess.FinalOutputPath != finalPath {
 		t.Fatalf("unexpected final output path: %+v", sess)
+	}
+}
+
+func TestUpdateReceiverManifestSerializesConcurrentChunks(t *testing.T) {
+	t.Parallel()
+	sessionDir := t.TempDir()
+	a := &app{receiverSessions: make(map[string]*receiverSessionState)}
+	const chunkCount = 64
+	const chunkSize = int64(1024)
+	base := proto.Header{
+		TransferID: "tx-concurrent",
+		FileName:   "concurrent.bin",
+		TotalBytes: chunkCount * chunkSize,
+		PartSize:   chunkSize,
+	}
+	a.ensureReceiverSession(sessionDir, base.FileName, base)
+
+	errs := make(chan error, chunkCount)
+	var wg sync.WaitGroup
+	for i := int64(0); i < chunkCount; i++ {
+		wg.Add(1)
+		go func(index int64) {
+			defer wg.Done()
+			h := base
+			h.ChunkIndex = index
+			h.Offset = index * chunkSize
+			errs <- a.updateReceiverManifest(sessionDir, base.FileName, h, chunkSize)
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("updateReceiverManifest: %v", err)
+		}
+	}
+
+	mf, err := manifest.Load(filepath.Join(sessionDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if got := len(mf.Chunks); got != chunkCount {
+		t.Fatalf("chunk count = %d, want %d", got, chunkCount)
+	}
+	if got := countManifestChunksByStatus(mf, manifest.StatusDone); got != chunkCount {
+		t.Fatalf("done count = %d, want %d", got, chunkCount)
 	}
 }
 

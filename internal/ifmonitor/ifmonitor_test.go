@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"lab/multinet/internal/config"
+	"github.com/Codyte/MultiSend/internal/config"
 )
 
 func TestShouldIgnoreByName(t *testing.T) {

@@ -5,7 +5,7 @@ This project is not yet open for public contributions, but the repository is bei
 ## Development Expectations
 
 - Keep changes scoped and testable.
-- Run `go test ./...` from `MultiSend` before submitting changes.
+- Run `go test ./...` from the repository root before submitting changes.
 - For PowerShell UI or installer changes, run a parser check before shipping.
 - Do not commit local logs, generated backups, received files, credentials, or machine-specific configuration.
 - Do not introduce paid or external APIs unless they are optional, documented, and disabled by default.

@@ -1,5 +1,109 @@
 package main
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L143   type channelProgress
+//   L157   type channelsProgress
+//   L162   type jobDetails
+//   L189   type receiverSession
+//   L205   type failedChunkRef
+//   L212   type progressSample
+//   L219   type jobState
+//   L239   type receiverSessionState
+//   L246   type app
+//   L261   type pullJobState
+//   L279   type sendTargetOptions
+//   L288   type apiErrorResponse
+//   L298   type preparedRemoteSource
+//   L309   agentLogPath
+//   L320   setupAgentLogging
+//   L342   rotateLogIfLarge
+//   L355   main
+//   L420   app.selectAndPersistPorts
+//   L450   app.writeRuntimeState
+//   L471   app.runReceiver
+//   L494   app.handleConn
+//   L624   app.updateReceiverManifest
+//   L678   app.ensureReceiverSession
+//   L692   app.updateReceiverSession
+//   L705   app.maybeScheduleReceiverFinalize
+//   L726   app.finalizeReceiverSession
+//   L803   app.failReceiverFinalize
+//   L812   app.markReceiverDone
+//   L828   countManifestChunksByStatus
+//   L838   validateReceiverManifestComplete
+//   L854   validateReceiverFinalSize
+//   L865   validateReceiverPath
+//   L887   isUnder
+//   L895   isPullHeader
+//   L899   validateReceiveRelPath
+//   L917   resolveReceiveRelRoot
+//   L940   sanitizePublishName
+//   L952   receiverTargetInfo
+//   L971   receiverFinalPath
+//   L981   pullPublishRoot
+//   L989   extractZipSafe
+//   L1044  mergeReceiverChunks
+//   L1076  cleanupReceiverChunks
+//   L1092  app.runLocalAPI
+//   L1105  app.runControlAPI
+//   L1118  app.health
+//   L1126  app.peers
+//   L1134  app.send
+//   L1176  app.startSend
+//   L1281  app.jobs
+//   L1297  app.jobByID
+//   L1359  app.remoteSend
+//   L1432  app.remoteJobByID
+//   L1495  app.pullsHandler
+//   L1527  app.pullByID
+//   L1575  app.createJob
+//   L1617  app.resumeJob
+//   L1675  app.cancelJob
+//   L1696  app.updateJobProgress
+//   L1818  app.finishJob
+//   L1847  app.setJobManifest
+//   L1862  app.refreshJobFromManifestLocked
+//   L1913  app.receiverSessionsHandler
+//   L1921  app.receiverSessionByID
+//   L1940  app.listReceiverSessions
+//   L1953  app.getReceiverSession
+//   L1965  app.downloadsHandler
+//   L1996  app.downloadByID
+//   L2089  app.interfacesHandler
+//   L2117  app.localIPs
+//   L2129  app.enrichSendOptions
+//   L2161  app.controlAuthOK
+//   L2177  app.controlAPIToken
+//   L2184  app.remoteSendRoots
+//   L2194  app.isRemoteSendPathAllowed
+//   L2211  resolveExistingPath
+//   L2223  app.isRemoteAllowed
+//   L2245  app.resolvePeerAddressByNodeID
+//   L2263  parseFileSource
+//   L2315  prepareRemoteSendSource
+//   L2352  zipDirectory
+//   L2414  app.findPeerByHost
+//   L2451  validateOutputUnderReceive
+//   L2474  app.remoteControlBase
+//   L2487  postJSON
+//   L2507  getJSON
+//   L2522  decodeRemoteAPIResponse
+//   L2539  setBearerToken
+//   L2545  formatRemoteAPIError
+//   L2570  app.createPull
+//   L2656  validateChunkSizeMB
+//   L2663  app.pullViewFromRemote
+//   L2730  app.listPulls
+//   L2750  app.refreshPull
+//   L2760  app.pullRemoteAction
+//   L2783  validateLabReceivePath
+//   L2812  writeJSON
+//   L2817  writeAPIError
+//   L2821  writeAPIErrorDetail
+//   L2847  remoteAddrForLog
+// ======================= END NAV INDEX =======================
+
 import (
 	"archive/zip"
 	"context"
@@ -16,29 +120,25 @@ import (
 	"net/http"
 	urlpkg "net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"lab/multinet/internal/config"
-	"lab/multinet/internal/discovery"
-	"lab/multinet/internal/download"
-	"lab/multinet/internal/ifmonitor"
-	"lab/multinet/internal/manifest"
-	"lab/multinet/internal/netif"
-	"lab/multinet/internal/ports"
-	"lab/multinet/internal/proto"
-	"lab/multinet/internal/transfer"
+	"github.com/Codyte/MultiSend/internal/config"
+	"github.com/Codyte/MultiSend/internal/discovery"
+	"github.com/Codyte/MultiSend/internal/download"
+	"github.com/Codyte/MultiSend/internal/ifmonitor"
+	"github.com/Codyte/MultiSend/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/netif"
+	"github.com/Codyte/MultiSend/internal/ports"
+	"github.com/Codyte/MultiSend/internal/proto"
+	"github.com/Codyte/MultiSend/internal/transfer"
 )
-
-type jobSummary struct {
-	ID      string `json:"id"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
-}
 
 type channelProgress struct {
 	BytesSent  int64   `json:"bytes_sent"`
@@ -137,13 +237,17 @@ type jobState struct {
 }
 
 type receiverSessionState struct {
-	session receiverSession
-	timer   *time.Timer
-	mu      sync.Mutex
+	session    receiverSession
+	timer      *time.Timer
+	mu         sync.Mutex
+	manifestMu sync.Mutex
 }
 
 type app struct {
 	cfg                config.Config
+	configPath         string
+	configMu           sync.Mutex
+	stop               context.CancelFunc
 	disc               *discovery.Manager
 	downloads          *download.Manager
 	jobsMu             sync.RWMutex
@@ -257,7 +361,7 @@ func main() {
 		log.Printf("agent log path=%s", logPath)
 	}
 
-	configOnly := flag.Bool("print-config", false, "print effective config and exit")
+	configOnly := flag.Bool("print-config", false, "print redacted effective config and exit")
 	doctor := flag.Bool("doctor", false, "print diagnostic report and exit")
 	labSmoke := flag.Bool("lab-smoke", false, "run local lab smoke against running agent and exit")
 	downloadSmoke := flag.Bool("download-smoke", false, "run local download smoke and exit")
@@ -281,15 +385,17 @@ func main() {
 		log.Fatalf("receive path: %v", err)
 	}
 	if *configOnly {
+		cfg.NodeSecret = "[redacted]"
 		b, _ := json.MarshalIndent(cfg, "", "  ")
 		fmt.Printf("config path: %s\n%s\n", path, string(b))
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	a := &app{cfg: cfg, jobsByID: map[string]*jobState{}, pullsByID: map[string]*pullJobState{}, receiverSessions: map[string]*receiverSessionState{}}
+	a := &app{cfg: cfg, configPath: path, stop: stop, jobsByID: map[string]*jobState{}, pullsByID: map[string]*pullJobState{}, receiverSessions: map[string]*receiverSessionState{}}
+	a.restoreOperationHistory()
 	if err := a.selectAndPersistPorts(path); err != nil {
 		log.Fatalf("select ports: %v", err)
 	}
@@ -307,7 +413,8 @@ func main() {
 	go a.runControlAPI(ctx)
 
 	log.Printf("multisend-agent running node=%s transfer=%d discovery=%d api=%d control=%d", cfg.NodeID, cfg.SelectedPorts.Transfer, cfg.SelectedPorts.Discovery, cfg.SelectedPorts.LocalAPI, cfg.SelectedPorts.Control)
-	select {}
+	<-ctx.Done()
+	log.Printf("multisend-agent stopping")
 }
 
 func (a *app) selectAndPersistPorts(cfgPath string) error {
@@ -451,6 +558,10 @@ func (a *app) handleConn(conn net.Conn) {
 		return
 	}
 	if st, err := os.Stat(target); err == nil && st.Size() == h.PartSize {
+		if err := a.updateReceiverManifest(sessionDir, name, h, h.PartSize); err != nil {
+			log.Printf("save manifest for existing chunk: %v", err)
+			return
+		}
 		if err := proto.WriteChunkAck(conn, proto.ChunkAck{
 			Type:          "chunk_ack",
 			TransferID:    h.TransferID,
@@ -460,7 +571,7 @@ func (a *app) handleConn(conn net.Conn) {
 		}); err != nil {
 			log.Printf("write ack existing: %v", err)
 		}
-		a.updateReceiverManifest(sessionDir, name, h, h.PartSize)
+		a.maybeScheduleReceiverFinalize(sessionDir)
 		return
 	}
 	f, err := os.Create(target)
@@ -492,6 +603,10 @@ func (a *app) handleConn(conn net.Conn) {
 			return
 		}
 	}
+	if err := a.updateReceiverManifest(sessionDir, name, h, written); err != nil {
+		log.Printf("save manifest: %v", err)
+		return
+	}
 	if err := proto.WriteChunkAck(conn, proto.ChunkAck{
 		Type:          "chunk_ack",
 		TransferID:    h.TransferID,
@@ -502,12 +617,20 @@ func (a *app) handleConn(conn net.Conn) {
 		log.Printf("write ack: %v", err)
 		return
 	}
-	a.updateReceiverManifest(sessionDir, name, h, written)
 	a.maybeScheduleReceiverFinalize(sessionDir)
 	log.Printf("received %s (%d bytes)", filepath.Base(target), h.PartSize)
 }
 
-func (a *app) updateReceiverManifest(sessionDir, name string, h proto.Header, written int64) {
+func (a *app) updateReceiverManifest(sessionDir, name string, h proto.Header, written int64) error {
+	a.receiverSessionsMu.RLock()
+	st := a.receiverSessions[sessionDir]
+	a.receiverSessionsMu.RUnlock()
+	if st == nil {
+		return fmt.Errorf("receiver session is not initialized")
+	}
+	st.manifestMu.Lock()
+	defer st.manifestMu.Unlock()
+
 	mfPath := filepath.Join(sessionDir, "manifest.json")
 	mf, lerr := manifest.Load(mfPath)
 	if lerr != nil {
@@ -536,7 +659,7 @@ func (a *app) updateReceiverManifest(sessionDir, name string, h proto.Header, wr
 		})
 	}
 	if err := manifest.SaveAtomic(mfPath, mf); err != nil {
-		log.Printf("save manifest: %v", err)
+		return err
 	}
 	a.updateReceiverSession(sessionDir, func(s *receiverSession) {
 		s.SessionDir = sessionDir
@@ -549,6 +672,7 @@ func (a *app) updateReceiverManifest(sessionDir, name string, h proto.Header, wr
 		s.ChunksFailed = countManifestChunksByStatus(mf, manifest.StatusFailed)
 		s.MergeStatus = "pending"
 	})
+	return nil
 }
 
 func (a *app) ensureReceiverSession(sessionDir, name string, h proto.Header) {
@@ -966,21 +1090,7 @@ func cleanupReceiverChunks(sessionDir string) error {
 }
 
 func (a *app) runLocalAPI(ctx context.Context) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", a.health)
-	mux.HandleFunc("/peers", a.peers)
-	mux.HandleFunc("/send", a.send)
-	mux.HandleFunc("/pulls", a.pullsHandler)
-	mux.HandleFunc("/pulls/", a.pullByID)
-	mux.HandleFunc("/jobs", a.jobs)
-	mux.HandleFunc("/jobs/", a.jobByID)
-	mux.HandleFunc("/receiver/sessions", a.receiverSessionsHandler)
-	mux.HandleFunc("/receiver/sessions/", a.receiverSessionByID)
-	mux.HandleFunc("/downloads", a.downloadsHandler)
-	mux.HandleFunc("/downloads/", a.downloadByID)
-	mux.HandleFunc("/interfaces", a.interfacesHandler)
-
-	srv := &http.Server{Addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(a.cfg.SelectedPorts.LocalAPI)), Handler: mux}
+	srv := newAgentHTTPServer(net.JoinHostPort("127.0.0.1", strconv.Itoa(a.cfg.SelectedPorts.LocalAPI)), a.localHandler())
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -993,10 +1103,7 @@ func (a *app) runLocalAPI(ctx context.Context) {
 }
 
 func (a *app) runControlAPI(ctx context.Context) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/remote-send", a.remoteSend)
-	mux.HandleFunc("/remote-jobs/", a.remoteJobByID)
-	srv := &http.Server{Addr: net.JoinHostPort("0.0.0.0", strconv.Itoa(a.cfg.SelectedPorts.Control)), Handler: mux}
+	srv := newAgentHTTPServer(net.JoinHostPort("0.0.0.0", strconv.Itoa(a.cfg.SelectedPorts.Control)), a.controlHandler())
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1008,11 +1115,19 @@ func (a *app) runControlAPI(ctx context.Context) {
 	}
 }
 
-func (a *app) health(w http.ResponseWriter, _ *http.Request) {
+func (a *app) health(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "node_id": a.cfg.NodeID, "name": a.cfg.DisplayName, "agent_log_path": agentLogPath()})
 }
 
-func (a *app) peers(w http.ResponseWriter, _ *http.Request) {
+func (a *app) peers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
 	writeJSON(w, a.disc.Peers())
 }
 
@@ -1028,18 +1143,28 @@ func (a *app) send(w http.ResponseWriter, r *http.Request) {
 		Lab            bool   `json:"lab"`
 		LabReceivePath string `json:"lab_receive_path"`
 		ChunkSizeMB    int64  `json:"chunk_size_mb"`
+		CleanupPath    string `json:"cleanup_path"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIErrorDetail(w, r, http.StatusBadRequest, "bad_json", "bad json", err.Error())
+	if !decodeJSONRequest(w, r, &req) {
 		return
 	}
 	if req.FilePath == "" || (req.PeerNodeID == "" && req.PeerAddress == "") {
 		writeAPIError(w, r, http.StatusBadRequest, "missing_destination", "file_path and (peer_node_id or peer_address) are required")
 		return
 	}
+	if err := validateChunkSizeMB(req.ChunkSizeMB); err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "invalid_chunk_size", err.Error())
+		return
+	}
+	cleanupPath, err := validateManagedCleanupPath(req.FilePath, req.CleanupPath)
+	if err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "invalid_cleanup_path", err.Error())
+		return
+	}
 	resp, err := a.startSend(req.FilePath, req.PeerNodeID, req.PeerAddress, sendTargetOptions{
 		Lab:            req.Lab,
 		LabReceivePath: req.LabReceivePath,
+		CleanupPath:    cleanupPath,
 	}, req.ChunkSizeMB)
 	if err != nil {
 		writeAPIError(w, r, http.StatusBadRequest, "send_start_failed", err.Error())
@@ -1049,6 +1174,14 @@ func (a *app) send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) startSend(filePath, peerNodeID, peerAddress string, targetOpts sendTargetOptions, chunkSizeMB int64) (map[string]string, error) {
+	if err := validateChunkSizeMB(chunkSizeMB); err != nil {
+		return nil, err
+	}
+	filePath = strings.TrimSpace(filePath)
+	if !filepath.IsAbs(filePath) {
+		return nil, fmt.Errorf("file_path must be absolute")
+	}
+	filePath = filepath.Clean(filePath)
 	sendOpts := transfer.SendOptions{}
 	if chunkSizeMB > 0 {
 		sendOpts.ChunkSize = chunkSizeMB * 1024 * 1024
@@ -1135,7 +1268,7 @@ func (a *app) startSend(filePath, peerNodeID, peerAddress string, targetOpts sen
 		log.Printf("send_done job_id=%s transfer_id=%s manifest=%q target=%s file=%q", jobID, result.TransferID, result.ManifestPath, targetAddr, filePath)
 		a.finishJob(jobID, "done", "")
 		if targetOpts.CleanupPath != "" {
-			if err := os.RemoveAll(targetOpts.CleanupPath); err != nil {
+			if err := removeManagedCleanupPath(filePath, targetOpts.CleanupPath); err != nil {
 				log.Printf("send_cleanup_failed job_id=%s cleanup_path=%q err=%v", jobID, targetOpts.CleanupPath, err)
 			} else {
 				log.Printf("send_cleanup_done job_id=%s cleanup_path=%q", jobID, targetOpts.CleanupPath)
@@ -1145,13 +1278,19 @@ func (a *app) startSend(filePath, peerNodeID, peerAddress string, targetOpts sen
 	return map[string]string{"job_id": jobID, "status": "running"}, nil
 }
 
-func (a *app) jobs(w http.ResponseWriter, _ *http.Request) {
-	a.jobsMu.RLock()
-	defer a.jobsMu.RUnlock()
-	list := make([]jobSummary, 0, len(a.jobsByID))
-	for _, s := range a.jobsByID {
-		list = append(list, jobSummary{ID: s.details.ID, Status: s.details.Status, Message: s.details.Message})
+func (a *app) jobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
 	}
+	a.jobsMu.Lock()
+	list := make([]jobDetails, 0, len(a.jobsByID))
+	for _, s := range a.jobsByID {
+		a.refreshJobFromManifestLocked(&s.details)
+		list = append(list, s.details)
+	}
+	a.jobsMu.Unlock()
+	sort.Slice(list, func(i, j int) bool { return list[i].StartedAt > list[j].StartedAt })
 	writeJSON(w, list)
 }
 
@@ -1187,6 +1326,15 @@ func (a *app) jobByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]string{"job_id": id, "status": "running"})
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := a.forgetJob(id); err != nil {
+			writeAPIError(w, r, http.StatusBadRequest, "job_forget_failed", err.Error())
+			return
+		}
+		log.Printf("job_history_removed job_id=%s", id)
+		writeJSON(w, map[string]string{"job_id": id, "status": "removed"})
 		return
 	}
 
@@ -1229,12 +1377,15 @@ func (a *app) remoteSend(w http.ResponseWriter, r *http.Request) {
 		FolderResult      string `json:"folder_result"`
 		ChunkSizeMB       int64  `json:"chunk_size_mb"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIErrorDetail(w, r, http.StatusBadRequest, "bad_json", "bad json", err.Error())
+	if !decodeJSONRequest(w, r, &req) {
 		return
 	}
 	if strings.TrimSpace(req.FilePath) == "" {
 		writeAPIError(w, r, http.StatusBadRequest, "file_path_required", "file_path is required")
+		return
+	}
+	if err := validateChunkSizeMB(req.ChunkSizeMB); err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "invalid_chunk_size", err.Error())
 		return
 	}
 	// SEC-1: a remote peer may only request files inside the configured shared
@@ -1264,6 +1415,11 @@ func (a *app) remoteSend(w http.ResponseWriter, r *http.Request) {
 		CleanupPath:    prepared.CleanupPath,
 	}, req.ChunkSizeMB)
 	if err != nil {
+		if prepared.CleanupPath != "" {
+			if cleanupErr := removeManagedCleanupPath(sendPath, prepared.CleanupPath); cleanupErr != nil {
+				log.Printf("remote_send_prepare_cleanup_failed path=%q err=%v", prepared.CleanupPath, cleanupErr)
+			}
+		}
 		writeAPIError(w, r, http.StatusBadRequest, "remote_send_start_failed", err.Error())
 		return
 	}
@@ -1346,8 +1502,11 @@ func (a *app) pullsHandler(w http.ResponseWriter, r *http.Request) {
 			OutputDir   string `json:"output_dir"`
 			ChunkSizeMB int64  `json:"chunk_size_mb"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeAPIErrorDetail(w, r, http.StatusBadRequest, "bad_json", "bad json", err.Error())
+		if !decodeJSONRequest(w, r, &req) {
+			return
+		}
+		if err := validateChunkSizeMB(req.ChunkSizeMB); err != nil {
+			writeAPIError(w, r, http.StatusBadRequest, "invalid_chunk_size", err.Error())
 			return
 		}
 		p, err := a.createPull(req.SourceURL, req.OutputDir, req.ChunkSizeMB)
@@ -1401,6 +1560,15 @@ func (a *app) pullByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, p)
 		return
 	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := a.forgetPull(id); err != nil {
+			writeAPIError(w, r, http.StatusBadRequest, "pull_forget_failed", err.Error())
+			return
+		}
+		log.Printf("pull_history_removed pull_id=%s", id)
+		writeJSON(w, map[string]string{"id": id, "status": "removed"})
+		return
+	}
 	writeAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 }
 
@@ -1423,7 +1591,7 @@ func (a *app) createJob(id string, totalBytes int64, filePath, targetAddr string
 		UpdatedAt:       now.Format(time.RFC3339),
 	}
 	a.jobsMu.Lock()
-	a.jobsByID[id] = &jobState{
+	state := &jobState{
 		details:        d,
 		filePath:       filePath,
 		targetAddr:     targetAddr,
@@ -1439,6 +1607,9 @@ func (a *app) createJob(id string, totalBytes int64, filePath, targetAddr string
 		cancelFunc:     cancel,
 		samples:        make([]progressSample, 0, 40),
 	}
+	a.jobsByID[id] = state
+	a.persistJobLocked(state)
+	a.pruneJobsLocked()
 	a.jobsMu.Unlock()
 	return ctx
 }
@@ -1454,6 +1625,10 @@ func (a *app) resumeJob(id string) error {
 		a.jobsMu.Unlock()
 		return fmt.Errorf("job is not resumable")
 	}
+	if !state.details.ResumeSupported {
+		a.jobsMu.Unlock()
+		return fmt.Errorf("job is not safely resumable")
+	}
 	if state.filePath == "" || state.targetAddr == "" {
 		a.jobsMu.Unlock()
 		return fmt.Errorf("missing job request context")
@@ -1463,7 +1638,9 @@ func (a *app) resumeJob(id string) error {
 	state.details.Status = "running"
 	state.details.Message = ""
 	state.details.UpdatedAt = time.Now().Format(time.RFC3339)
+	a.persistJobLocked(state)
 	log.Printf("job_resume_requested job_id=%s file=%q target=%s manifest=%q", id, state.filePath, state.targetAddr, state.details.ManifestPath)
+	resumeOptions := state.persistedSendOptions()
 	a.jobsMu.Unlock()
 
 	go func(jobID, filePath, targetAddr, cleanupPath string, opts transfer.SendOptions) {
@@ -1485,21 +1662,13 @@ func (a *app) resumeJob(id string) error {
 		log.Printf("send_resume_done job_id=%s transfer_id=%s manifest=%q target=%s file=%q", jobID, result.TransferID, result.ManifestPath, targetAddr, filePath)
 		a.finishJob(jobID, "done", "")
 		if cleanupPath != "" {
-			if err := os.RemoveAll(cleanupPath); err != nil {
+			if err := removeManagedCleanupPath(filePath, cleanupPath); err != nil {
 				log.Printf("send_cleanup_failed job_id=%s cleanup_path=%q err=%v", jobID, cleanupPath, err)
 			} else {
 				log.Printf("send_cleanup_done job_id=%s cleanup_path=%q", jobID, cleanupPath)
 			}
 		}
-	}(id, state.filePath, state.targetAddr, state.cleanupPath, transfer.SendOptions{
-		ExplicitResume: true,
-		Lab:            state.lab,
-		LabReceivePath: state.labPath,
-		ReceiveRelPath: state.receiveRelPath,
-		PublishName:    state.publishName,
-		FolderResult:   state.folderResult,
-		ChunkSize:      state.chunkSize,
-	})
+	}(id, state.filePath, state.targetAddr, state.cleanupPath, resumeOptions)
 	return nil
 }
 
@@ -1520,6 +1689,7 @@ func (a *app) cancelJob(id string) bool {
 	if state.cancelFunc != nil {
 		state.cancelFunc()
 	}
+	a.persistJobLocked(state)
 	return true
 }
 
@@ -1558,6 +1728,7 @@ func (a *app) updateJobProgress(id string, s transfer.ProgressSnapshot) {
 	d.ChunksPending = s.ChunksPending
 	d.ChunksSending = s.ChunksSending
 	d.ResumeSupported = s.ResumeSupported
+	manifestAttached := d.ManifestPath == "" && s.ManifestPath != ""
 	if s.ManifestPath != "" {
 		d.ManifestPath = s.ManifestPath
 	}
@@ -1639,6 +1810,9 @@ func (a *app) updateJobProgress(id string, s transfer.ProgressSnapshot) {
 	state.lastTotal = d.BytesSent
 	state.lastCable = s.CableBytes
 	state.lastWifi = s.WifiBytes
+	if manifestAttached {
+		a.persistJobLocked(state)
+	}
 }
 
 func (a *app) finishJob(id, status, message string) {
@@ -1666,6 +1840,8 @@ func (a *app) finishJob(id, status, message string) {
 		state.cancelFunc = nil
 	}
 	a.refreshJobFromManifestLocked(&state.details)
+	a.persistJobLocked(state)
+	a.pruneJobsLocked()
 }
 
 func (a *app) setJobManifest(id, manifestPath string) {
@@ -1680,6 +1856,7 @@ func (a *app) setJobManifest(id, manifestPath string) {
 	}
 	state.details.ManifestPath = manifestPath
 	a.refreshJobFromManifestLocked(&state.details)
+	a.persistJobLocked(state)
 }
 
 func (a *app) refreshJobFromManifestLocked(d *jobDetails) {
@@ -1762,13 +1939,14 @@ func (a *app) receiverSessionByID(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) listReceiverSessions() []receiverSession {
 	a.receiverSessionsMu.RLock()
-	defer a.receiverSessionsMu.RUnlock()
 	out := make([]receiverSession, 0, len(a.receiverSessions))
 	for _, st := range a.receiverSessions {
 		st.mu.Lock()
 		out = append(out, st.session)
 		st.mu.Unlock()
 	}
+	a.receiverSessionsMu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].SessionDir > out[j].SessionDir })
 	return out
 }
 
@@ -1790,12 +1968,11 @@ func (a *app) downloadsHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, a.downloads.List())
 	case http.MethodPost:
 		var req download.StartRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.URL) == "" {
-			detail := ""
-			if err != nil {
-				detail = err.Error()
-			}
-			writeAPIErrorDetail(w, r, http.StatusBadRequest, "bad_json", "bad json", detail)
+		if !decodeJSONRequest(w, r, &req) {
+			return
+		}
+		if strings.TrimSpace(req.URL) == "" {
+			writeAPIError(w, r, http.StatusBadRequest, "url_required", "url is required")
 			return
 		}
 		job, err := a.downloads.Start(req)
@@ -1852,6 +2029,17 @@ func (a *app) downloadByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, job)
 		return
 	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		res, err := a.downloads.Forget(id)
+		if err != nil {
+			writeAPIError(w, r, http.StatusBadRequest, "download_forget_failed", err.Error())
+			return
+		}
+		log.Printf("download_history_removed job_id=%s deleted_chunks=%d freed_bytes=%d manifest_deleted=%t dir_deleted=%t warnings=%d",
+			id, res.DeletedChunks, res.FreedBytes, res.ManifestDeleted, res.DirDeleted, len(res.Warnings))
+		writeJSON(w, res)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "cleanup" && parts[2] == "preview" {
 		if r.Method != http.MethodGet {
 			writeAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -1873,8 +2061,8 @@ func (a *app) downloadByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var req download.CleanupRequest
-		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&req)
+		if !decodeOptionalJSONRequest(w, r, &req) {
+			return
 		}
 		res, err := a.downloads.Cleanup(id, req)
 		if err != nil {
@@ -1972,16 +2160,25 @@ func (a *app) enrichSendOptions(opts transfer.SendOptions) transfer.SendOptions 
 // allows, preserving backward compatibility for unpaired setups.
 func (a *app) controlAuthOK(r *http.Request) bool {
 	secret := strings.TrimSpace(a.cfg.NodeSecret)
-	if !a.cfg.RequireAuth || secret == "" {
+	if !a.cfg.RequireAuth {
 		return true
 	}
-	const prefix = "Bearer "
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, prefix) {
+	if secret == "" {
 		return false
 	}
-	provided := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return false
+	}
+	provided := parts[1]
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) == 1
+}
+
+func (a *app) controlAPIToken() string {
+	if !a.cfg.RequireAuth {
+		return ""
+	}
+	return strings.TrimSpace(a.cfg.NodeSecret)
 }
 
 func (a *app) remoteSendRoots() []string {
@@ -1991,23 +2188,36 @@ func (a *app) remoteSendRoots() []string {
 	return a.cfg.RemoteSendRoots
 }
 
-// isRemoteSendPathAllowed reports whether p resolves inside one of the shared
-// roots. Symlinks are rejected separately by prepareRemoteSendSource.
+// isRemoteSendPathAllowed reports whether p resolves inside one of the resolved
+// shared roots. Resolving every parent prevents symlinks and junctions from
+// turning a lexically safe path into an arbitrary file read.
 func (a *app) isRemoteSendPathAllowed(p string) bool {
-	abs, err := filepath.Abs(strings.TrimSpace(p))
+	resolved, err := resolveExistingPath(p)
 	if err != nil {
 		return false
 	}
 	for _, root := range a.remoteSendRoots() {
-		rootAbs, err := filepath.Abs(strings.TrimSpace(root))
-		if err != nil || rootAbs == "" {
+		rootResolved, err := resolveExistingPath(root)
+		if err != nil {
 			continue
 		}
-		if abs == rootAbs || isUnder(abs, rootAbs) {
+		if isUnder(resolved, rootResolved) {
 			return true
 		}
 	}
 	return false
+}
+
+func resolveExistingPath(raw string) (string, error) {
+	abs, err := filepath.Abs(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(resolved)
 }
 
 func (a *app) isRemoteAllowed(remoteAddr string) bool {
@@ -2148,10 +2358,8 @@ func zipDirectory(sourceDir, zipPath string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 	zw := zip.NewWriter(out)
-	defer zw.Close()
-	return filepath.WalkDir(sourceAbs, func(path string, d os.DirEntry, walkErr error) error {
+	walkErr := filepath.WalkDir(sourceAbs, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -2198,6 +2406,9 @@ func zipDirectory(sourceDir, zipPath string) error {
 		}
 		return closeErr
 	})
+	zipCloseErr := zw.Close()
+	fileCloseErr := out.Close()
+	return errors.Join(walkErr, zipCloseErr, fileCloseErr)
 }
 
 func (a *app) findPeerByHost(host string) *discovery.Peer {
@@ -2271,7 +2482,9 @@ func (a *app) remoteControlBase(peer *discovery.Peer) string {
 	return fmt.Sprintf("http://%s:%d", ip, peer.ControlPort)
 }
 
-func postJSON(url string, body any, out any) error {
+const maxRemoteAPIResponseBodyBytes int64 = 1 << 20
+
+func postJSON(url string, body any, out any, bearerToken string) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -2282,33 +2495,51 @@ func postJSON(url string, body any, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setBearerToken(req, bearerToken)
 	res, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		msg, _ := io.ReadAll(res.Body)
-		return errors.New(formatRemoteAPIError(res.StatusCode, msg))
-	}
-	if out != nil {
-		return json.NewDecoder(res.Body).Decode(out)
-	}
-	return nil
+	return decodeRemoteAPIResponse(res, out)
 }
 
-func getJSON(url string, out any) error {
+func getJSON(url string, out any, bearerToken string) error {
 	client := &http.Client{Timeout: 8 * time.Second}
-	res, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	setBearerToken(req, bearerToken)
+	res, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		msg, _ := io.ReadAll(res.Body)
-		return errors.New(formatRemoteAPIError(res.StatusCode, msg))
+	return decodeRemoteAPIResponse(res, out)
+}
+
+func decodeRemoteAPIResponse(res *http.Response, out any) error {
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxRemoteAPIResponseBodyBytes+1))
+	if err != nil {
+		return err
 	}
-	return json.NewDecoder(res.Body).Decode(out)
+	if int64(len(body)) > maxRemoteAPIResponseBodyBytes {
+		return fmt.Errorf("remote response body exceeds %d bytes", maxRemoteAPIResponseBodyBytes)
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return errors.New(formatRemoteAPIError(res.StatusCode, body))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(body, out)
+}
+
+func setBearerToken(req *http.Request, token string) {
+	if token = strings.TrimSpace(token); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 }
 
 func formatRemoteAPIError(status int, body []byte) string {
@@ -2337,6 +2568,12 @@ func formatRemoteAPIError(status int, body []byte) string {
 }
 
 func (a *app) createPull(sourceURL, outputDir string, chunkSizeMB int64) (map[string]any, error) {
+	if err := validateChunkSizeMB(chunkSizeMB); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(outputDir) == "" {
+		outputDir = a.cfg.ReceivePath
+	}
 	folderResult := config.NormalizePullFolderResult(a.cfg.PullFolderResult)
 	host, sourcePath, err := parseFileSource(sourceURL)
 	if err != nil {
@@ -2372,7 +2609,7 @@ func (a *app) createPull(sourceURL, outputDir string, chunkSizeMB int64) (map[st
 	log.Printf("pull_remote_send_request host=%s node_id=%s control=%s source=%q output_dir=%q receive_rel=%q folder_result=%s chunk_size_mb=%d",
 		host, peer.NodeID, controlBase, sourcePath, outputDir, relPath, folderResult, chunkSizeMB)
 	var remoteResp map[string]any
-	if err := postJSON(controlBase+"/remote-send", req, &remoteResp); err != nil {
+	if err := postJSON(controlBase+"/remote-send", req, &remoteResp, a.controlAPIToken()); err != nil {
 		log.Printf("pull_remote_send_failed host=%s node_id=%s control=%s source=%q err=%v", host, peer.NodeID, controlBase, sourcePath, err)
 		return nil, err
 	}
@@ -2408,10 +2645,19 @@ func (a *app) createPull(sourceURL, outputDir string, chunkSizeMB int64) (map[st
 	}
 	a.pullsMu.Lock()
 	a.pullsByID[pullID] = state
+	a.persistPullLocked(state)
+	a.prunePullsLocked()
 	a.pullsMu.Unlock()
 	log.Printf("pull_start pull_id=%s remote_job_id=%s host=%s node_id=%s source_type=%s output=%q folder_result=%s",
 		pullID, remoteJobID, host, peer.NodeID, sourceType, expectedOutput, folderResult)
 	return a.pullViewFromRemote(state)
+}
+
+func validateChunkSizeMB(value int64) error {
+	if value < 0 || value > 1024 {
+		return fmt.Errorf("chunk_size_mb must be between 0 and 1024")
+	}
+	return nil
 }
 
 func (a *app) pullViewFromRemote(st *pullJobState) (map[string]any, error) {
@@ -2424,7 +2670,7 @@ func (a *app) pullViewFromRemote(st *pullJobState) (map[string]any, error) {
 		return nil, fmt.Errorf("remote control unavailable")
 	}
 	var remote jobDetails
-	if err := getJSON(base+"/remote-jobs/"+st.RemoteJobID, &remote); err != nil {
+	if err := getJSON(base+"/remote-jobs/"+st.RemoteJobID, &remote, a.controlAPIToken()); err != nil {
 		log.Printf("pull_refresh_failed pull_id=%s remote_job_id=%s base=%s err=%v", st.ID, st.RemoteJobID, base, err)
 		return nil, err
 	}
@@ -2437,6 +2683,8 @@ func (a *app) pullViewFromRemote(st *pullJobState) (map[string]any, error) {
 	if strings.TrimSpace(outputPath) == "" {
 		outputPath = filepath.Join(st.OutputDir, filepath.Base(remote.FilePath))
 	}
+	a.persistPullLocked(st)
+	a.prunePullsLocked()
 	a.pullsMu.Unlock()
 	if remote.Status == "failed" || remote.Status == "canceled" || remote.Status == "done" {
 		log.Printf("pull_remote_status pull_id=%s remote_job_id=%s status=%s message=%q manifest=%q output=%q",
@@ -2486,6 +2734,7 @@ func (a *app) listPulls() []map[string]any {
 		states = append(states, s)
 	}
 	a.pullsMu.RUnlock()
+	sort.Slice(states, func(i, j int) bool { return states[i].StartedAt.After(states[j].StartedAt) })
 	out := make([]map[string]any, 0, len(states))
 	for _, s := range states {
 		v, err := a.pullViewFromRemote(s)
@@ -2523,7 +2772,7 @@ func (a *app) pullRemoteAction(id, action string) (map[string]any, error) {
 	if base == "" {
 		return nil, fmt.Errorf("remote control unavailable")
 	}
-	if err := postJSON(base+"/remote-jobs/"+st.RemoteJobID+"/"+action, map[string]any{}, nil); err != nil {
+	if err := postJSON(base+"/remote-jobs/"+st.RemoteJobID+"/"+action, map[string]any{}, nil, a.controlAPIToken()); err != nil {
 		log.Printf("pull_remote_action_failed pull_id=%s remote_job_id=%s action=%s err=%v", st.ID, st.RemoteJobID, action, err)
 		return nil, err
 	}

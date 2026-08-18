@@ -1,22 +1,22 @@
 # ====================== BEGIN NAV INDEX ======================
 # NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-#   L29    Read-Config
-#   L36    Write-Config
-#   L44    Backup-Config
-#   L53    Restore-Config
-#   L60    Join-List
-#   L66    Split-List
-#   L72    Get-PropValue
-#   L95    Add-Page
-#   L109   New-NodeSecret
-#   L116   New-Label
-#   L117   New-Box
-#   L118   New-Check
-#   L119   Add-LineToMultilineBox
-#   L127   Remove-LineFromMultilineBox
-#   L257   Get-AgentApiPort
-#   L273   Load-Interfaces
-#   Segurança tab controls ~L330; save/validation in $btnSave click
+#   L31    Read-Config
+#   L38    Write-Config
+#   L46    Backup-Config
+#   L55    Restore-Config
+#   L62    Join-List
+#   L68    Split-List
+#   L74    Get-PropValue
+#   L97    Add-Page
+#   L111   New-NodeSecret
+#   L118   New-Label
+#   L119   New-Box
+#   L120   New-Check
+#   L121   Add-LineToMultilineBox
+#   L129   Remove-LineFromMultilineBox
+#   L261   Get-AgentApiPort
+#   L277   Load-Interfaces
+#   L340   Segurança ----------------------
 # ======================= END NAV INDEX =======================
 
 Set-StrictMode -Version Latest
@@ -140,7 +140,7 @@ $pageGeneral.Controls.Add($txtDisplay)
 $pageGeneral.Controls.Add((New-Label 'Pasta de recebimento' 20 60))
 $txtReceive = New-Box 220 56 620 $cfg.receive_path
 $pageGeneral.Controls.Add($txtReceive)
-$pageGeneral.Controls.Add((New-Label 'Porta API local' 20 100))
+$pageGeneral.Controls.Add((New-Label 'Porta API atual (automática)' 20 100))
 $numLocal = New-Object System.Windows.Forms.NumericUpDown
 $numLocal.Left = 220; $numLocal.Top = 96; $numLocal.Width = 120; $numLocal.Minimum = 1; $numLocal.Maximum = 65535
 $selectedPorts = Get-PropValue -Object $cfg -Name 'selected_ports' -Default $null
@@ -152,7 +152,9 @@ if ($null -ne $localApi) {
 } else {
     $numLocal.Value = 56221
 }
+$numLocal.Enabled = $false
 $pageGeneral.Controls.Add($numLocal)
+$pageGeneral.Controls.Add((New-Label 'Selecionada automaticamente na faixa configurada ao iniciar o agente.' 360 100 500))
 $startAgent = Get-PropValue -Object $cfg -Name 'start_agent_on_login' -Default $false
 $chkAutoStart = New-Check 20 140 'Iniciar Agent ao entrar' $startAgent
 $pageGeneral.Controls.Add($chkAutoStart)
@@ -483,12 +485,6 @@ $btnSave.Add_Click({
         catch { throw "Pasta de recebimento inválida: $recv`r`n$($_.Exception.Message)" }
         $cfg | Add-Member -MemberType NoteProperty -Name 'display_name' -Value $txtDisplay.Text.Trim() -Force
         $cfg | Add-Member -MemberType NoteProperty -Name 'receive_path' -Value $recv -Force
-        $selectedPorts = Get-PropValue -Object $cfg -Name 'selected_ports' -Default $null
-        if ($null -eq $selectedPorts) {
-            $cfg | Add-Member -MemberType NoteProperty -Name 'selected_ports' -Value (New-Object PSObject) -Force
-        }
-        $cfg.selected_ports | Add-Member -MemberType NoteProperty -Name 'local_api' -Value ([int]$numLocal.Value) -Force
-        $cfg | Add-Member -MemberType NoteProperty -Name 'local_api_port' -Value ([int]$numLocal.Value) -Force
         $cfg | Add-Member -MemberType NoteProperty -Name 'start_agent_on_login' -Value $chkAutoStart.Checked -Force
         $cfg | Add-Member -MemberType NoteProperty -Name 'interface_policy' -Value ([string]$cmbPolicy.SelectedItem) -Force
         $cfg | Add-Member -MemberType NoteProperty -Name 'interface_refresh_seconds' -Value ([int]$numRefresh.Value) -Force
@@ -554,11 +550,22 @@ $btnRestartAgent.Add_Click({
         $agentExe = if (Test-Path -LiteralPath $agentInstalled) { $agentInstalled } elseif (Test-Path -LiteralPath $agentLocal) { $agentLocal } else { $null }
         if (-not $agentExe) { throw 'multisend-agent.exe nao encontrado (instalado ou local).' }
 
-        $procs = @(Get-Process -Name 'multisend-agent' -ErrorAction SilentlyContinue)
-        foreach ($p in $procs) {
-            try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {}
+        $stoppedGracefully = $false
+        try {
+            $port = Get-AgentApiPort
+            Invoke-RestMethod -Uri "http://127.0.0.1:$port/agent/shutdown" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 2 | Out-Null
+            for ($i = 0; $i -lt 10; $i++) {
+                Start-Sleep -Milliseconds 200
+                if (-not (Get-Process -Name 'multisend-agent' -ErrorAction SilentlyContinue)) { $stoppedGracefully = $true; break }
+            }
+        } catch {}
+        if (-not $stoppedGracefully) {
+            $procs = @(Get-Process -Name 'multisend-agent' -ErrorAction SilentlyContinue)
+            foreach ($p in $procs) {
+                try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {}
+            }
         }
-        Start-Sleep -Milliseconds 600
+        Start-Sleep -Milliseconds 300
         Start-Process -FilePath $agentExe -WindowStyle Hidden | Out-Null
         [System.Windows.Forms.MessageBox]::Show('MultiSend Agent reiniciado com sucesso.', 'MultiSend', 'OK', 'Information') | Out-Null
         Start-Sleep -Milliseconds 800

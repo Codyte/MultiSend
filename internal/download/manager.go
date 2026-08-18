@@ -1,5 +1,77 @@
 package download
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L98    type ChannelStatus
+//   L109   type Job
+//   L135   type ChunkFailureRef
+//   L142   type StartRequest
+//   L149   type CleanupPreview
+//   L160   type CleanupRequest
+//   L166   type CleanupResult
+//   L176   type Manager
+//   L187   type state
+//   L217   type sample
+//   L222   type localChannel
+//   L227   NewManager
+//   L240   type historyCandidate
+//   L245   Manager.restoreHistory
+//   L293   Manager.restoreState
+//   L423   Manager.pruneTerminalLocked
+//   L439   validDownloadID
+//   L453   Manager.getConfigSnapshot
+//   L459   Manager.getStorageRootsSnapshot
+//   L465   Manager.maybeRefreshConfig
+//   L489   Manager.Start
+//   L508   Manager.Resume
+//   L532   Manager.Cancel
+//   L553   Manager.List
+//   L564   Manager.Get
+//   L574   Manager.prepare
+//   L702   Manager.uniqueOutputPath
+//   L742   samePath
+//   L748   Manager.run
+//   L1022  Manager.currentChannels
+//   L1054  Manager.initialChannelCount
+//   L1076  Manager.targetChunkCount
+//   L1098  isLoopbackURL
+//   L1115  Manager.refreshChannelStates
+//   L1137  Manager.bumpChannelFailure
+//   L1152  Manager.bumpChannelSuccess
+//   L1173  Manager.refreshStatsLocked
+//   L1236  Manager.estimateProgressBytesLocked
+//   L1268  Manager.refreshChannelRates
+//   L1315  Manager.channelProgressBytesLocked
+//   L1347  ProbeDownload
+//   L1398  headDownload
+//   L1418  fileNameFromHeaderOrURL
+//   L1438  sanitizeFileName
+//   L1449  sessionDirFor
+//   L1456  partPathFor
+//   L1461  retryPending
+//   L1472  Manager.resetStalledChunksLocked
+//   L1492  normalizeDownloadURL
+//   L1514  allDone
+//   L1523  mergeParts
+//   L1579  downloadChunkVia
+//   L1620  isUnder
+//   L1628  channelStates
+//   L1645  hasChannel
+//   L1654  buildStrictPlan
+//   L1676  pickStrictPendingForChannel
+//   L1685  cloneIntMap
+//   L1693  cloneInt64Map
+//   L1701  Manager.bumpIdleGapsLocked
+//   L1713  Manager.updatePipelineTelemetryLocked
+//   L1743  Manager.chunkTimeout
+//   L1763  findChannel
+//   L1772  cloneChannels
+//   L1780  cloneJob
+//   L1800  Manager.PreviewCleanup
+//   L1880  Manager.Cleanup
+//   L1940  Manager.Forget
+// ======================= END NAV INDEX =======================
+
 import (
 	"context"
 	"fmt"
@@ -16,11 +88,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"lab/multinet/internal/chunk"
-	"lab/multinet/internal/config"
-	"lab/multinet/internal/ifmonitor"
-	"lab/multinet/internal/manifest"
-	"lab/multinet/internal/scheduler"
+	"github.com/Codyte/MultiSend/internal/chunk"
+	"github.com/Codyte/MultiSend/internal/config"
+	"github.com/Codyte/MultiSend/internal/ifmonitor"
+	"github.com/Codyte/MultiSend/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/scheduler"
 )
 
 type ChannelStatus struct {
@@ -102,12 +174,13 @@ type CleanupResult struct {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	cfgMu    sync.RWMutex
-	jobs     map[string]*state
-	baseDir  string
-	cfg      config.Config
-	rootRecv string
+	mu            sync.RWMutex
+	startMu       sync.Mutex
+	cfgMu         sync.RWMutex
+	jobs          map[string]*state
+	baseDir       string
+	cfg           config.Config
+	rootRecv      string
 	lastCfgReload time.Time
 }
 
@@ -136,6 +209,11 @@ type state struct {
 // more aggressively than a local peer transfer. See transfer.maxAttemptsPerChunk.
 const maxChunkAttempts = 8
 
+const (
+	maxRememberedTerminalJobs = 500
+	maxHistoryScanEntries     = 25_000
+)
+
 type sample struct {
 	at    time.Time
 	bytes int64
@@ -148,19 +226,240 @@ type localChannel struct {
 
 func NewManager(cfg config.Config) *Manager {
 	base := filepath.Join(cfg.ReceivePath, "Downloads")
-	return &Manager{
+	m := &Manager{
 		jobs:          map[string]*state{},
 		baseDir:       base,
 		cfg:           cfg,
 		rootRecv:      cfg.ReceivePath,
 		lastCfgReload: time.Now(),
 	}
+	m.restoreHistory()
+	return m
+}
+
+type historyCandidate struct {
+	path    string
+	modTime time.Time
+}
+
+func (m *Manager) restoreHistory() {
+	root, err := filepath.Abs(m.rootRecv)
+	if err != nil || strings.TrimSpace(root) == "" {
+		return
+	}
+	candidates := make([]historyCandidate, 0)
+	entries := 0
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		entries++
+		if entries > maxHistoryScanEntries {
+			return filepath.SkipAll
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() || !strings.EqualFold(entry.Name(), "manifest.json") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err == nil {
+			candidates = append(candidates, historyCandidate{path: path, modTime: info.ModTime()})
+		}
+		return nil
+	})
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].modTime.After(candidates[j].modTime) })
+	for _, candidate := range candidates {
+		if len(m.jobs) >= maxRememberedTerminalJobs {
+			break
+		}
+		st, err := m.restoreState(candidate.path, root)
+		if err != nil {
+			continue
+		}
+		if _, exists := m.jobs[st.job.ID]; !exists {
+			m.jobs[st.job.ID] = st
+		}
+	}
+}
+
+func (m *Manager) restoreState(manifestPath, receiveRoot string) (*state, error) {
+	mf, err := manifest.Load(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	if mf.Type != "internet_download" || !validDownloadID(mf.TransferID) || mf.TotalBytes <= 0 || len(mf.Chunks) == 0 {
+		return nil, fmt.Errorf("unsupported download manifest")
+	}
+	u, err := urlpkg.Parse(strings.TrimSpace(mf.Source.URL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || strings.TrimSpace(u.Host) == "" {
+		return nil, fmt.Errorf("invalid download source")
+	}
+	outputPath, err := filepath.Abs(strings.TrimSpace(mf.Target.Path))
+	if err != nil || !filepath.IsAbs(strings.TrimSpace(mf.Target.Path)) || !isUnder(outputPath, receiveRoot) {
+		return nil, fmt.Errorf("download target outside receive root")
+	}
+	manifestAbs, err := filepath.Abs(manifestPath)
+	if err != nil || !isUnder(manifestAbs, receiveRoot) {
+		return nil, fmt.Errorf("manifest outside receive root")
+	}
+	expectedManifest := filepath.Join(sessionDirFor(mf.TransferID, outputPath), "manifest.json")
+	if !strings.EqualFold(filepath.Clean(manifestAbs), filepath.Clean(expectedManifest)) {
+		return nil, fmt.Errorf("manifest path does not match download target")
+	}
+	var expectedOffset int64
+	for i, c := range mf.Chunks {
+		if c.Index != int64(i) || c.Offset != expectedOffset || c.Size <= 0 || c.Size > mf.TotalBytes-expectedOffset || c.BytesDone < 0 || c.BytesDone > c.Size || c.Attempts < 0 {
+			return nil, fmt.Errorf("invalid chunk plan")
+		}
+		switch c.Status {
+		case manifest.StatusPending, manifest.StatusSending, manifest.StatusDone, manifest.StatusFailed, manifest.StatusCanceled:
+		default:
+			return nil, fmt.Errorf("invalid chunk status")
+		}
+		expectedOffset += c.Size
+	}
+	if expectedOffset != mf.TotalBytes {
+		return nil, fmt.Errorf("chunk plan size mismatch")
+	}
+
+	finalComplete := false
+	if info, statErr := os.Stat(outputPath); statErr == nil && !info.IsDir() && info.Size() == mf.TotalBytes {
+		finalComplete = allDone(mf)
+	}
+	repaired := false
+	if !finalComplete {
+		for i := range mf.Chunks {
+			c := &mf.Chunks[i]
+			if c.Status != manifest.StatusDone {
+				continue
+			}
+			info, statErr := os.Stat(partPathFor(mf.TransferID, outputPath, c.Index))
+			if statErr == nil && !info.IsDir() && info.Size() == c.Size {
+				continue
+			}
+			c.Status = manifest.StatusPending
+			c.BytesDone = 0
+			c.CompletedAt = nil
+			c.LastError = ""
+			repaired = true
+		}
+	}
+	if repaired {
+		if err := manifest.SaveAtomic(manifestAbs, mf); err != nil {
+			return nil, err
+		}
+	}
+
+	startedAt := mf.CreatedAt
+	if startedAt.IsZero() {
+		startedAt = mf.UpdatedAt
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	channels := map[string]ChannelStatus{
+		"cable": {State: "offline"},
+		"wifi":  {State: "offline"},
+	}
+	status := "canceled"
+	message := "interrupted by agent restart; ready to resume"
+	if finalComplete {
+		status = "done"
+		message = ""
+	} else {
+		for _, c := range mf.Chunks {
+			if c.Status == manifest.StatusFailed && c.Attempts >= maxChunkAttempts {
+				status = "failed"
+				message = "download incomplete; ready to retry"
+				break
+			}
+		}
+	}
+	st := &state{
+		job: Job{
+			ID:              mf.TransferID,
+			URL:             mf.Source.URL,
+			Status:          status,
+			Message:         message,
+			OutputPath:      outputPath,
+			ManifestPath:    manifestAbs,
+			TotalBytes:      mf.TotalBytes,
+			ChunksTotal:     int64(len(mf.Chunks)),
+			ResumeSupported: status != "done",
+			PipelineMode:    config.NormalizeDownloadPipelineMode(m.cfg.DownloadPipelineMode),
+			InFlight:        map[string]int{"cable": 0, "wifi": 0},
+			QueueDepth:      map[string]int{"cable": 0, "wifi": 0},
+			IdleGapMS:       map[string]int64{"cable": 0, "wifi": 0},
+			Channels:        channels,
+		},
+		mf:         mf,
+		startedAt:  startedAt,
+		lastAt:     time.Now(),
+		channels:   channels,
+		allowRange: true,
+		chSamples:  map[string][]sample{"cable": {}, "wifi": {}},
+		idleGapMS:  map[string]int64{"cable": 0, "wifi": 0},
+		rootDir:    receiveRoot,
+	}
+	restoredBytes := mf.DoneBytes()
+	if finalComplete {
+		restoredBytes = mf.TotalBytes
+	}
+	m.refreshStatsLocked(st, restoredBytes)
+	st.job.MbpsNow = 0
+	st.job.MbpsAvg = 0
+	st.samples = nil
+	return st, nil
+}
+
+func (m *Manager) pruneTerminalLocked() {
+	terminal := make([]*state, 0, len(m.jobs))
+	for _, st := range m.jobs {
+		if st.job.Status != "running" {
+			terminal = append(terminal, st)
+		}
+	}
+	if len(terminal) <= maxRememberedTerminalJobs {
+		return
+	}
+	sort.Slice(terminal, func(i, j int) bool { return terminal[i].startedAt.After(terminal[j].startedAt) })
+	for _, st := range terminal[maxRememberedTerminalJobs:] {
+		delete(m.jobs, st.job.ID)
+	}
+}
+
+func validDownloadID(id string) bool {
+	digits := strings.TrimPrefix(id, "dl-")
+	if digits == id || digits == "" {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	_, err := strconv.ParseInt(digits, 10, 64)
+	return err == nil
 }
 
 func (m *Manager) getConfigSnapshot() config.Config {
 	m.cfgMu.RLock()
 	defer m.cfgMu.RUnlock()
 	return m.cfg
+}
+
+func (m *Manager) getStorageRootsSnapshot() (receiveRoot, downloadRoot string) {
+	m.cfgMu.RLock()
+	defer m.cfgMu.RUnlock()
+	return m.rootRecv, m.baseDir
 }
 
 func (m *Manager) maybeRefreshConfig() {
@@ -188,6 +487,8 @@ func (m *Manager) maybeRefreshConfig() {
 }
 
 func (m *Manager) Start(req StartRequest) (Job, error) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
 	id := fmt.Sprintf("dl-%d", time.Now().UnixNano())
 	st, err := m.prepare(id, req)
 	if err != nil {
@@ -197,19 +498,22 @@ func (m *Manager) Start(req StartRequest) (Job, error) {
 	st.cancel = cancel
 	m.mu.Lock()
 	m.jobs[id] = st
+	m.pruneTerminalLocked()
+	job := cloneJob(st.job)
 	m.mu.Unlock()
 	go m.run(ctx, id, false)
-	return st.job, nil
+	return job, nil
 }
 
 func (m *Manager) Resume(id string) (Job, error) {
-	m.mu.RLock()
+	m.mu.Lock()
 	st := m.jobs[id]
-	m.mu.RUnlock()
 	if st == nil {
+		m.mu.Unlock()
 		return Job{}, fmt.Errorf("job not found")
 	}
 	if st.job.Status != "canceled" && st.job.Status != "failed" {
+		m.mu.Unlock()
 		return Job{}, fmt.Errorf("job is not resumable")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -219,11 +523,10 @@ func (m *Manager) Resume(id string) (Job, error) {
 	st.startedAt = time.Now()
 	st.lastAt = st.startedAt
 	st.lastBytes = st.job.BytesDone
-	m.mu.Lock()
-	m.jobs[id] = st
+	job := cloneJob(st.job)
 	m.mu.Unlock()
 	go m.run(ctx, id, true)
-	return st.job, nil
+	return job, nil
 }
 
 func (m *Manager) Cancel(id string) bool {
@@ -242,17 +545,19 @@ func (m *Manager) Cancel(id string) bool {
 		st.job.Message = "canceled"
 	}
 	m.jobs[id] = st
+	m.pruneTerminalLocked()
 	m.mu.Unlock()
 	return true
 }
 
 func (m *Manager) List() []Job {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	out := make([]Job, 0, len(m.jobs))
 	for _, st := range m.jobs {
 		out = append(out, cloneJob(st.job))
 	}
+	m.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
 	return out
 }
 
@@ -269,6 +574,9 @@ func (m *Manager) Get(id string) (Job, bool) {
 func (m *Manager) prepare(id string, req StartRequest) (*state, error) {
 	m.maybeRefreshConfig()
 	cfg := m.getConfigSnapshot()
+	if req.ChunkSizeMB < 0 || req.ChunkSizeMB > 1024 {
+		return nil, fmt.Errorf("chunk_size_mb must be between 0 and 1024")
+	}
 	rawURL := normalizeDownloadURL(req.URL)
 	if rawURL == "" {
 		return nil, fmt.Errorf("url is required")
@@ -316,7 +624,10 @@ func (m *Manager) prepare(id string, req StartRequest) (*state, error) {
 		return nil, fmt.Errorf("output_dir must stay inside %s", recvAbs)
 	}
 	safeName := sanitizeFileName(fileName)
-	finalPath := filepath.Join(outRootAbs, safeName)
+	finalPath, err := m.uniqueOutputPath(outRootAbs, safeName)
+	if err != nil {
+		return nil, err
+	}
 	sessionDir := sessionDirFor(id, finalPath)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return nil, err
@@ -384,8 +695,54 @@ func (m *Manager) prepare(id string, req StartRequest) (*state, error) {
 		allowRange: true,
 		chSamples:  map[string][]sample{"cable": {}, "wifi": {}},
 		idleGapMS:  map[string]int64{"cable": 0, "wifi": 0},
-		rootDir:    baseDir,
+		rootDir:    recvAbs,
 	}, nil
+}
+
+func (m *Manager) uniqueOutputPath(outputDir, fileName string) (string, error) {
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	reserved := make(map[string]struct{}, len(m.jobs))
+	for _, st := range m.jobs {
+		if st != nil && samePath(filepath.Dir(st.job.OutputPath), outputDir) {
+			reserved[strings.ToLower(filepath.Base(st.job.OutputPath))] = struct{}{}
+		}
+	}
+	m.mu.RUnlock()
+
+	ext := filepath.Ext(fileName)
+	base := strings.TrimSuffix(fileName, ext)
+	for suffix := 1; suffix <= maxHistoryScanEntries; suffix++ {
+		name := fileName
+		if suffix > 1 {
+			name = fmt.Sprintf("%s (%d)%s", base, suffix, ext)
+		}
+		nameKey := strings.ToLower(name)
+		if _, exists := reserved[nameKey]; exists {
+			continue
+		}
+		occupied := false
+		for _, entry := range entries {
+			entryName := strings.ToLower(entry.Name())
+			if entryName == nameKey || strings.HasPrefix(entryName, nameKey+".download.") {
+				occupied = true
+				break
+			}
+		}
+		if !occupied {
+			return filepath.Join(outputDir, name), nil
+		}
+	}
+	return "", fmt.Errorf("could not reserve a unique output name for %s", fileName)
+}
+
+func samePath(a, b string) bool {
+	aAbs, aErr := filepath.Abs(a)
+	bAbs, bErr := filepath.Abs(b)
+	return aErr == nil && bErr == nil && strings.EqualFold(aAbs, bAbs)
 }
 
 func (m *Manager) run(ctx context.Context, id string, isResume bool) {
@@ -429,17 +786,18 @@ func (m *Manager) run(ctx context.Context, id string, isResume bool) {
 		}
 	}()
 	sched := scheduler.NewWeightedScheduler()
-	pipelineMode := config.NormalizeDownloadPipelineMode(m.cfg.DownloadPipelineMode)
-	strategy := config.NormalizeDownloadChannelStrategy(m.cfg.DownloadChannelStrategy)
+	runCfg := m.getConfigSnapshot()
+	pipelineMode := config.NormalizeDownloadPipelineMode(runCfg.DownloadPipelineMode)
+	strategy := config.NormalizeDownloadChannelStrategy(runCfg.DownloadChannelStrategy)
 	initialChannels := m.currentChannels(st)
 	strictSplit := strategy == "strict_split" && hasChannel(initialChannels, "cable") && hasChannel(initialChannels, "wifi")
 	strictPlan := map[int64]string{}
 	if strictSplit {
-		strictPlan = buildStrictPlan(st.mf.Chunks, m.cfg.DownloadSplitCablePct)
+		strictPlan = buildStrictPlan(st.mf.Chunks, runCfg.DownloadSplitCablePct)
 	}
 	perChannelLimit := 1
 	if pipelineMode == "pipelined" {
-		perChannelLimit = m.cfg.DownloadInFlightPerChan
+		perChannelLimit = runCfg.DownloadInFlightPerChan
 		if perChannelLimit <= 0 {
 			perChannelLimit = 2
 		}
@@ -634,6 +992,7 @@ func (m *Manager) run(ctx context.Context, id string, isResume bool) {
 		st.job.Status = "canceled"
 		st.job.Message = "canceled"
 		m.refreshStatsLocked(st, doneBytes.Load())
+		m.pruneTerminalLocked()
 		m.mu.Unlock()
 		return
 	}
@@ -644,17 +1003,20 @@ func (m *Manager) run(ctx context.Context, id string, isResume bool) {
 		st.job.Status = "failed"
 		st.job.Message = "download incomplete"
 		m.refreshStatsLocked(st, doneBytes.Load())
+		m.pruneTerminalLocked()
 		return
 	}
 	if err := mergeParts(st.job.OutputPath, st.mf); err != nil {
 		st.job.Status = "failed"
 		st.job.Message = err.Error()
 		m.refreshStatsLocked(st, doneBytes.Load())
+		m.pruneTerminalLocked()
 		return
 	}
 	st.job.Status = "done"
 	st.job.Message = ""
 	m.refreshStatsLocked(st, doneBytes.Load())
+	m.pruneTerminalLocked()
 }
 
 func (m *Manager) currentChannels(st *state) []localChannel {
@@ -989,7 +1351,7 @@ func ProbeDownload(rawURL, reqName string) (fileName string, total int64, accept
 	}
 
 	headErr := err
-	
+
 	req, reqErr := http.NewRequest(http.MethodGet, rawURL, nil)
 	if reqErr != nil {
 		return "", 0, false, "", "", fmt.Errorf("download_probe_failed: HEAD failed (%v); server does not support HEAD or Range GET required for chunked download: %v", headErr, reqErr)
@@ -1159,37 +1521,59 @@ func allDone(mf *manifest.Manifest) bool {
 }
 
 func mergeParts(finalPath string, mf *manifest.Manifest) error {
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+	dir := filepath.Dir(finalPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	out, err := os.Create(finalPath)
+	if _, err := os.Lstat(finalPath); err == nil {
+		return fmt.Errorf("final output already exists: %s", finalPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	out, err := os.CreateTemp(dir, ".multisend-merge-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	tmpPath := out.Name()
+	defer os.Remove(tmpPath)
 	for _, c := range mf.Chunks {
 		p := partPathFor(mf.TransferID, finalPath, c.Index)
 		f, err := os.Open(p)
 		if err != nil {
+			_ = out.Close()
 			return err
 		}
 		n, err := io.Copy(out, f)
 		_ = f.Close()
 		if err != nil {
+			_ = out.Close()
 			return err
 		}
 		if n != c.Size {
+			_ = out.Close()
 			return fmt.Errorf("chunk size mismatch at index %d", c.Index)
 		}
 	}
-	st, err := os.Stat(finalPath)
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	st, err := os.Stat(tmpPath)
 	if err != nil {
 		return err
 	}
 	if st.Size() != mf.TotalBytes {
 		return fmt.Errorf("final size mismatch got=%d want=%d", st.Size(), mf.TotalBytes)
 	}
-	return nil
+	if _, err := os.Lstat(finalPath); err == nil {
+		return fmt.Errorf("final output already exists: %s", finalPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmpPath, finalPath)
 }
 
 func downloadChunkVia(ctx context.Context, rawURL string, offset, size int64, outPath, localIP string) error {
@@ -1416,37 +1800,44 @@ func cloneJob(in Job) Job {
 func (m *Manager) PreviewCleanup(id string) (CleanupPreview, error) {
 	m.mu.RLock()
 	st := m.jobs[id]
+	var job Job
+	root := ""
+	if st != nil {
+		job = cloneJob(st.job)
+		root = st.rootDir
+	}
 	m.mu.RUnlock()
 	if st == nil {
 		return CleanupPreview{}, fmt.Errorf("job not found")
 	}
+	cfg := m.getConfigSnapshot()
+	_, downloadRoot := m.getStorageRootsSnapshot()
 	p := CleanupPreview{
 		DownloadID:   id,
-		ManifestPath: st.job.ManifestPath,
-		FinalFile:    st.job.OutputPath,
+		ManifestPath: job.ManifestPath,
+		FinalFile:    job.OutputPath,
 		Actions:      []string{},
 	}
-	if st.job.Status != "done" {
+	if job.Status != "done" {
 		p.Reason = "download not completed"
 		return p, fmt.Errorf("%s", p.Reason)
 	}
-	finalInfo, err := os.Stat(st.job.OutputPath)
+	finalInfo, err := os.Stat(job.OutputPath)
 	if err != nil {
 		p.Reason = "final file missing"
 		return p, fmt.Errorf("%s", p.Reason)
 	}
-	if finalInfo.Size() != st.job.TotalBytes {
+	if finalInfo.Size() != job.TotalBytes {
 		p.Reason = "final size mismatch"
 		return p, fmt.Errorf("%s", p.Reason)
 	}
-	if st.job.ChunksDone != st.job.ChunksTotal || st.job.ChunksFailed != 0 || st.job.ChunksPending != 0 || st.job.ChunksSending != 0 {
+	if job.ChunksDone != job.ChunksTotal || job.ChunksFailed != 0 || job.ChunksPending != 0 || job.ChunksSending != 0 {
 		p.Reason = "chunk counters not safe for cleanup"
 		return p, fmt.Errorf("%s", p.Reason)
 	}
-	sessionDir := sessionDirFor(st.job.ID, st.job.OutputPath)
-	root := st.rootDir
+	sessionDir := sessionDirFor(job.ID, job.OutputPath)
 	if strings.TrimSpace(root) == "" {
-		root = m.baseDir
+		root = downloadRoot
 	}
 	rootAbs, _ := filepath.Abs(root)
 	sessAbs, _ := filepath.Abs(sessionDir)
@@ -1454,7 +1845,7 @@ func (m *Manager) PreviewCleanup(id string) (CleanupPreview, error) {
 		p.Reason = "cleanup path outside allowed download root"
 		return p, fmt.Errorf("%s", p.Reason)
 	}
-	manifestAbs, err := filepath.Abs(st.job.ManifestPath)
+	manifestAbs, err := filepath.Abs(job.ManifestPath)
 	if err != nil {
 		p.Reason = "invalid manifest path"
 		return p, fmt.Errorf("%s", p.Reason)
@@ -1478,7 +1869,7 @@ func (m *Manager) PreviewCleanup(id string) (CleanupPreview, error) {
 	p.ChunkBytes = total
 	p.Safe = true
 	p.Actions = append(p.Actions, "delete_chunks")
-	if m.cfg.KeepManifests {
+	if cfg.KeepManifests {
 		p.Actions = append(p.Actions, "keep_manifest")
 	} else {
 		p.Actions = append(p.Actions, "delete_manifest")
@@ -1491,15 +1882,16 @@ func (m *Manager) Cleanup(id string, req CleanupRequest) (CleanupResult, error) 
 	if err != nil {
 		return CleanupResult{}, err
 	}
-	deleteChunks := m.cfg.CleanupCompletedChunks
+	cfg := m.getConfigSnapshot()
+	deleteChunks := cfg.CleanupCompletedChunks
 	if req.DeleteChunks != nil {
 		deleteChunks = *req.DeleteChunks
 	}
-	deleteManifest := !m.cfg.KeepManifests
+	deleteManifest := !cfg.KeepManifests
 	if req.DeleteManifest != nil {
 		deleteManifest = *req.DeleteManifest
 	}
-	deleteEmptyDir := m.cfg.CleanupEmptyDownloadDirs
+	deleteEmptyDir := cfg.CleanupEmptyDownloadDirs
 	if req.DeleteEmptyDir != nil {
 		deleteEmptyDir = *req.DeleteEmptyDir
 	}
@@ -1540,5 +1932,74 @@ func (m *Manager) Cleanup(id string, req CleanupRequest) (CleanupResult, error) 
 			}
 		}
 	}
+	return res, nil
+}
+
+// Forget removes a terminal download's resumable metadata and partial chunks.
+// The completed output file is never removed.
+func (m *Manager) Forget(id string) (CleanupResult, error) {
+	receiveRoot, downloadRoot := m.getStorageRootsSnapshot()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.jobs[id]
+	if st == nil {
+		return CleanupResult{}, fmt.Errorf("job not found")
+	}
+	if st.job.Status == "running" {
+		return CleanupResult{}, fmt.Errorf("active download cannot be removed")
+	}
+	root := st.rootDir
+	if strings.TrimSpace(root) == "" {
+		root = receiveRoot
+	}
+	if strings.TrimSpace(root) == "" {
+		root = downloadRoot
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return CleanupResult{}, fmt.Errorf("invalid download root")
+	}
+	outputAbs, err := filepath.Abs(st.job.OutputPath)
+	if err != nil || !isUnder(outputAbs, rootAbs) {
+		return CleanupResult{}, fmt.Errorf("download output outside allowed root")
+	}
+	sessionAbs, err := filepath.Abs(sessionDirFor(id, outputAbs))
+	if err != nil || !isUnder(sessionAbs, rootAbs) {
+		return CleanupResult{}, fmt.Errorf("download session outside allowed root")
+	}
+	manifestAbs, err := filepath.Abs(st.job.ManifestPath)
+	if err != nil || !strings.EqualFold(filepath.Clean(manifestAbs), filepath.Clean(filepath.Join(sessionAbs, "manifest.json"))) {
+		return CleanupResult{}, fmt.Errorf("manifest path does not match download session")
+	}
+
+	res := CleanupResult{DownloadID: id, Warnings: []string{}}
+	files, err := filepath.Glob(filepath.Join(sessionAbs, "chunk*.part"))
+	if err != nil {
+		return res, err
+	}
+	for _, path := range files {
+		info, _ := os.Lstat(path)
+		if err := os.Remove(path); err != nil {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("could not remove %s: %v", filepath.Base(path), err))
+			continue
+		}
+		res.DeletedChunks++
+		if info != nil {
+			res.FreedBytes += info.Size()
+		}
+	}
+	if err := os.Remove(manifestAbs); err == nil || os.IsNotExist(err) {
+		res.ManifestDeleted = true
+	} else {
+		return res, fmt.Errorf("could not remove manifest: %w", err)
+	}
+	remaining, _ := filepath.Glob(filepath.Join(sessionAbs, "chunk*.part"))
+	res.RemainingChunks = len(remaining)
+	if entries, err := os.ReadDir(sessionAbs); err == nil && len(entries) == 0 {
+		if err := os.Remove(sessionAbs); err == nil {
+			res.DirDeleted = true
+		}
+	}
+	delete(m.jobs, id)
 	return res, nil
 }

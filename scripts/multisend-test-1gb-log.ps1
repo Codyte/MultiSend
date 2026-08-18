@@ -29,7 +29,7 @@ function Get-ApiBase {
 function Resolve-LauncherPath {
     $candidates = @(
         'C:\Program Files\MultiSend\bin\multisend-launcher.ps1',
-        (Join-Path $PSScriptRoot 'multisend-launcher.ps1')
+        (Join-Path (Split-Path -Parent $PSScriptRoot) 'multisend-launcher.ps1')
     )
     foreach ($p in $candidates) {
         if (Test-Path -LiteralPath $p) { return $p }

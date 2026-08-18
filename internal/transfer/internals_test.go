@@ -1,5 +1,14 @@
 package transfer
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L23    TestContentFingerprintDetectsInPlaceEdit
+//   L54    TestSenderIdentityMatchesEngineAndDetectsContentChange
+//   L92    TestProgressReaderRollback
+//   L108   TestManifestSaverThrottleAndFlush
+//   L135   TestHashSectionMatchesKnown
+// ======================= END NAV INDEX =======================
+
 import (
 	"bytes"
 	"os"
@@ -8,7 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"lab/multinet/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/chunk"
+	"github.com/Codyte/MultiSend/internal/manifest"
 )
 
 func TestContentFingerprintDetectsInPlaceEdit(t *testing.T) {
@@ -39,6 +49,84 @@ func TestContentFingerprintDetectsInPlaceEdit(t *testing.T) {
 	}
 	if fpA == fpC {
 		t.Fatal("fingerprints must differ on tail edit")
+	}
+}
+
+func TestSenderIdentityMatchesEngineAndDetectsContentChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.bin")
+	if err := os.WriteFile(path, []byte("abcdef"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := contentFingerprint(f, info.Size())
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := buildIdentity(path, info.Size(), info.ModTime(), "127.0.0.1:56200", 3, fingerprint)
+	got, err := SenderIdentity(path, "127.0.0.1:56200", 3)
+	if err != nil || got != want {
+		t.Fatalf("sender identity mismatch: got=%q want=%q err=%v", got, want, err)
+	}
+	if err := os.WriteFile(path, []byte("abcdeg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := SenderIdentity(path, "127.0.0.1:56200", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == got {
+		t.Fatal("sender identity must change when content changes at the same size and mtime")
+	}
+}
+
+func TestLoadOrCreateManifestStartsFreshAfterCompletedSend(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source.bin")
+	if err := os.WriteFile(sourcePath, []byte("abcdef"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := chunk.BuildPlan(info.Size(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := "same-content-and-target"
+	manifestPath := filepath.Join(dir, "manifest.json")
+	completed := newManifest(identity, info.Name(), info.Size(), 3, "127.0.0.1:56200", sourcePath, info.ModTime(), plan, time.Now().Add(-time.Minute))
+	oldID := completed.TransferID
+	for i := range completed.Chunks {
+		completed.Chunks[i].Status = manifest.StatusDone
+		completed.Chunks[i].BytesDone = completed.Chunks[i].Size
+	}
+	if err := manifest.SaveAtomic(manifestPath, completed); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh, err := loadOrCreateManifest(manifestPath, identity, sourcePath, info.Name(), info, 3, "127.0.0.1:56200", plan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.TransferID == oldID {
+		t.Fatal("new send reused the completed transfer id")
+	}
+	for _, c := range fresh.Chunks {
+		if c.Status != manifest.StatusPending || c.BytesDone != 0 {
+			t.Fatalf("fresh send retained completed chunk: %+v", c)
+		}
 	}
 }
 

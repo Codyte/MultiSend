@@ -54,8 +54,8 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 [Icons]
 Name: "{group}\MultiSend Doctor"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\bin\install-multisend-node-v5.ps1"" -Doctor"
 Name: "{group}\MultiSend Test"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\bin\install-multisend-node-v5.ps1"" -Test"
-Name: "{group}\MultiSend Settings"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\bin\multisend-settings-ui.ps1"""
-Name: "{group}\MultiSend Download Manager"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\bin\multisend-download-ui.ps1"""
+Name: "{group}\MultiSend Settings"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\bin\multisend-launcher.ps1"" -OpenWebUI -View settings"
+Name: "{group}\MultiSend"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\bin\multisend-launcher.ps1"" -OpenWebUI"
 
 [Code]
 function GetInstallArgs(Param: String): String;
@@ -69,5 +69,7 @@ begin
     Result := Result + ' -StartAgentNow';
 
   if WizardIsTaskSelected('autostart') then
-    Result := Result + ' -EnableAutoStart';
+    Result := Result + ' -EnableAutoStart'
+  else
+    Result := Result + ' -DisableAutoStart';
 end;

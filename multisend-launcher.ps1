@@ -1,28 +1,35 @@
 # ====================== BEGIN NAV INDEX ======================
 # NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-#   L40    Write-LauncherLog
-#   L53    Enter-LauncherCoordinator
-#   L64    Exit-LauncherCoordinator
-#   L72    Test-AgentApi
-#   L82    Get-LocalApiCandidates
-#   L112   Resolve-AgentApi
-#   L129   Format-Bytes
-#   L137   Resolve-InputFilePaths
-#   L160   Add-LaunchQueueItem
-#   L169   Collect-QueuedPaths
-#   L190   New-StagedZip
-#   L218   Remove-StagingSafe
-#   L230   Open-UnifiedSendMonitor
-#   L254   Open-DownloadManager
-#   L271   Show-SendConfigDialog
-#   L397   Get-TransferPortHint
-#   L422   Resolve-ManualPeerAddress
+#   L47    Write-LauncherLog
+#   L60    Enter-LauncherCoordinator
+#   L71    Exit-LauncherCoordinator
+#   L79    Test-AgentApi
+#   L89    Get-LocalApiCandidates
+#   L119   Resolve-AgentApi
+#   L136   Format-Bytes
+#   L144   Resolve-InputFilePaths
+#   L167   Add-LaunchQueueItem
+#   L176   Collect-QueuedPaths
+#   L197   New-StagedZip
+#   L225   Remove-StagingSafe
+#   L237   Open-WebUI
+#   L265   Normalize-ProtocolUrl
+#   L280   Open-UnifiedSendMonitor
+#   L285   Open-DownloadManager
+#   L289   Show-SendConfigDialog
+#   L415   Get-TransferPortHint
+#   L440   Resolve-ManualPeerAddress
 # ======================= END NAV INDEX =======================
 
 param(
     [Parameter(Position=0, ValueFromRemainingArguments=$true)] 
     [string[]]$FilePaths,
-    [string]$FilePath
+    [string]$FilePath,
+	[switch]$OpenWebUI,
+	[string]$ProtocolUrl,
+	[string]$JobId,
+    [ValidateSet('dashboard','settings')]
+    [string]$View = 'dashboard'
 )
 
 $cfgPath = Join-Path $env:APPDATA 'MultiSend\config.json'
@@ -227,45 +234,56 @@ function Remove-StagingSafe {
     return $false
 }
 
-function Open-UnifiedSendMonitor {
-    param([Parameter(Mandatory=$true)][string]$JobId)
-    $ui = Join-Path $PSScriptRoot 'multisend-download-ui.ps1'
-    if (-not (Test-Path -LiteralPath $ui)) {
-        Write-Host "UI not found: $ui"
-        return $false
+function Open-WebUI {
+    param(
+        [string]$JobId,
+        [string]$Source,
+        [ValidateSet('dashboard','settings')]
+        [string]$TargetView = 'dashboard'
+    )
+    if ([string]::IsNullOrWhiteSpace([string]$api)) { return $false }
+    $url = "$api/ui/"
+    $query = @()
+    if ($TargetView -eq 'settings') { $query += 'view=settings' }
+    if (-not [string]::IsNullOrWhiteSpace($JobId)) {
+        $query += ('job={0}' -f [Uri]::EscapeDataString($JobId))
     }
+    if (-not [string]::IsNullOrWhiteSpace($Source)) {
+        $query += ('source={0}' -f [Uri]::EscapeDataString($Source))
+    }
+    if ($query.Count -gt 0) { $url += ('?' + ($query -join '&')) }
     try {
-        Write-LauncherLog "Open-UnifiedSendMonitor job_id=$JobId"
-        Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-            '-NoExit',
-            '-NoProfile',
-            '-STA',
-            '-ExecutionPolicy','Bypass',
-            '-File', "`"$ui`"",
-            '-SendJobId', $JobId
-        ) -WindowStyle Normal | Out-Null
+        Write-LauncherLog "Open-WebUI url=$url"
+        Start-Process -FilePath $url | Out-Null
         return $true
     } catch {
-        Write-Host ("Could not open unified monitor UI: {0}" -f $_.Exception.Message)
+        Write-LauncherLog ("Could not open web UI: {0}" -f $_.Exception.Message)
         return $false
     }
 }
 
-function Open-DownloadManager {
-    $ui = Join-Path $PSScriptRoot 'multisend-download-ui.ps1'
-    if (-not (Test-Path -LiteralPath $ui)) { return $false }
-    try {
-        Write-LauncherLog "Open-DownloadManager"
-        Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-            '-NoProfile',
-            '-STA',
-            '-ExecutionPolicy','Bypass',
-            '-File', $ui
-        ) -WindowStyle Normal | Out-Null
-        return $true
-    } catch {
-        return $false
+function Normalize-ProtocolUrl {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $decoded = $Value.Trim()
+    if ($decoded.StartsWith('multisend:', [System.StringComparison]::OrdinalIgnoreCase)) { $decoded = $decoded.Substring('multisend:'.Length) }
+    if ($decoded.StartsWith('//')) { $decoded = $decoded.Substring(2) }
+    if ($decoded.StartsWith('download?', [System.StringComparison]::OrdinalIgnoreCase)) {
+        foreach ($part in $decoded.Substring('download?'.Length) -split '&') {
+            if ($part -match '^(?i)url=(.*)$') { $decoded = $Matches[1]; break }
+        }
     }
+    try { $decoded = [Uri]::UnescapeDataString($decoded) } catch {}
+    return $decoded.Trim()
+}
+
+function Open-UnifiedSendMonitor {
+    param([Parameter(Mandatory=$true)][string]$JobId)
+    return Open-WebUI -JobId $JobId
+}
+
+function Open-DownloadManager {
+    return Open-WebUI
 }
 
 function Show-SendConfigDialog {
@@ -432,7 +450,7 @@ function Resolve-ManualPeerAddress {
     return ('{0}:{1}' -f $v, $port)
 }
 
-Write-LauncherLog ("Launcher start file_path={0} file_paths_count={1} line={2}" -f $FilePath, @($FilePaths).Count, $script:InvocationLine)
+Write-LauncherLog ("Launcher start file_path={0} file_paths_count={1} open_web_ui={2} line={3}" -f $FilePath, @($FilePaths).Count, $OpenWebUI, $script:InvocationLine)
 
 if (-not (Enter-LauncherCoordinator)) {
     $initialOnly = Resolve-InputFilePaths
@@ -460,6 +478,14 @@ if (-not $api) {
     $ready = $false
     for ($i = 0; $i -lt 12; $i++) { Start-Sleep -Milliseconds 500; $api = Resolve-AgentApi; if ($api) { $ready = $true; break } }
     if (-not $ready) { Write-LauncherLog "Agent API not responding after start attempt"; Write-Host 'MultiSend Agent is not responding on local API range after start attempt.'; Exit-LauncherCoordinator; exit 1 }
+}
+
+if ($OpenWebUI) {
+	$opened = Open-WebUI -TargetView $View -JobId $JobId -Source (Normalize-ProtocolUrl $ProtocolUrl)
+    Exit-LauncherCoordinator
+    if ($opened) { exit 0 }
+    Write-Host 'Não foi possível abrir a interface web do MultiSend.'
+    exit 1
 }
 
 $initialPaths = Resolve-InputFilePaths
@@ -518,6 +544,7 @@ if (-not $cfgResult.confirmed) {
 }
 
 $payload = @{ file_path = $cfgResult.file_path }
+if ($cleanupPending) { $payload.cleanup_path = $stagingSessionDir }
 if (-not [string]::IsNullOrWhiteSpace($cfgResult.peer_address)) {
     $resolvedPeerAddress = Resolve-ManualPeerAddress -ManualText $cfgResult.peer_address -Peers $peers
     $payload.peer_address = $resolvedPeerAddress
@@ -542,15 +569,12 @@ $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
 try {
     Write-LauncherLog ("Sending file_path={0}" -f $sendFilePath)
     $res = Invoke-RestMethod -Uri "$api/send" -Method Post -ContentType 'application/json; charset=utf-8' -Body $bytes -ErrorAction Stop
-    if (-not $res.job_id) { Write-LauncherLog "No job_id returned by /send"; Write-Host 'Transfer request returned no job ID.'; $null = Open-DownloadManager; Exit-LauncherCoordinator; exit 1 }
+	if (-not $res.job_id) { Write-LauncherLog "No job_id returned by /send"; Write-Host 'Transfer request returned no job ID.'; $null = Open-DownloadManager; Exit-LauncherCoordinator; exit 1 }
+	$cleanupPending = $false # agent owns staging until success, resume, or explicit history deletion
     Write-Host ("Transfer started. Job ID: {0}" -f $res.job_id)
     Write-LauncherLog ("Transfer started job_id={0}" -f $res.job_id)
     $ok = Open-UnifiedSendMonitor -JobId $res.job_id
-    if ($cleanupPending) {
-        $clean = Remove-StagingSafe -Path $stagingSessionDir
-        Write-LauncherLog ("Cleanup staging: {0}" -f ($(if($clean){'ok'}else{'failed'})))
-    }
-    if (-not $ok) { Write-LauncherLog "Failed to open unified send monitor; fallback to download manager"; $null = Open-DownloadManager; Exit-LauncherCoordinator; exit 1 }
+	if (-not $ok) { Write-LauncherLog "Failed to open unified send monitor; fallback to download manager"; $null = Open-DownloadManager; Exit-LauncherCoordinator; exit 1 }
 } catch {
     $errMsg = $_.Exception.Message
     if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
@@ -566,10 +590,7 @@ try {
     Write-LauncherLog ("Send failed: {0}" -f $errMsg)
     Write-Host ("Failed to start transfer: {0}" -f $errMsg)
     $null = Open-DownloadManager
-    if ($cleanupPending) {
-        $clean = Remove-StagingSafe -Path $stagingSessionDir
-        Write-LauncherLog ("Cleanup staging: {0}" -f ($(if($clean){'ok'}else{'failed'})))
-    }
+	if ($cleanupPending) { Write-LauncherLog ("Preserved staging after ambiguous send failure: {0}" -f $stagingSessionDir) }
     Exit-LauncherCoordinator
     exit 1
 }

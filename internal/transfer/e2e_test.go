@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"lab/multinet/internal/proto"
+	"github.com/Codyte/MultiSend/internal/proto"
 )
 
 // fakeReceiver mimics the agent receiver: it verifies the HMAC and the per-chunk

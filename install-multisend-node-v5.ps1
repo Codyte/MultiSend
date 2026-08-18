@@ -1,44 +1,44 @@
 # ====================== BEGIN NAV INDEX ======================
 # NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
-#   L97    Write-Utf8NoBomFile
-#   L104   Write-Log
-#   L105   Write-Check
-#   L106   Write-Section
-#   L107   Write-Step
-#   L108   Write-Pass
-#   L109   Write-Skip
-#   L110   Write-WarnLine
-#   L112   Test-IsAdministrator
-#   L117   Ensure-Admin
-#   L118   Ensure-Mode
-#   L123   Get-UserConfigPath
-#   L124   Get-DefaultReceiveRoot
-#   L130   Ensure-Directories
-#   L135   Save-State
-#   L136   Read-State
-#   L137   Find-Binary
-#   L138   Test-AgentRunning
-#   L139   Get-AgentProcesses
-#   L141   Install-Binaries
-#   L149   Install-ExtensionFiles
-#   L160   New-NodeConfig
-#   L207   Ensure-Firewall
-#   L257   Set-AutoStart
-#   L271   Ensure-ExplorerContext
-#   L358   Ensure-ProtocolRegistration
-#   L384   Stop-Agent
-#   L385   Start-Agent
-#   L387   Remove-RegistrySubKeyTreeSafe
-#   L398   Remove-ExplorerContextKeysSafe
-#   L409   Remove-ProtocolRegistrationSafe
-#   L411   Ensure-Shortcuts
-#   L443   Remove-ShortcutsSafe
-#   L463   Run-Install
-#   L482   Run-Test
-#   L524   Run-Uninstall
-#   L540   Run-Repair
-#   L541   Run-Doctor
-#   L542   Run-LabSmoke
+#   L98    Write-Utf8NoBomFile
+#   L105   Write-Log
+#   L106   Write-Check
+#   L107   Write-Section
+#   L108   Write-Step
+#   L109   Write-Pass
+#   L110   Write-Skip
+#   L111   Write-WarnLine
+#   L113   Test-IsAdministrator
+#   L118   Ensure-Admin
+#   L119   Ensure-Mode
+#   L125   Get-UserConfigPath
+#   L126   Get-DefaultReceiveRoot
+#   L132   Ensure-Directories
+#   L137   Save-State
+#   L138   Read-State
+#   L139   Find-Binary
+#   L140   Test-AgentRunning
+#   L141   Get-AgentProcesses
+#   L143   Install-Binaries
+#   L154   Install-ExtensionFiles
+#   L167   New-NodeConfig
+#   L234   Ensure-Firewall
+#   L284   Set-AutoStart
+#   L298   Ensure-ExplorerContext
+#   L383   Ensure-ProtocolRegistration
+#   L409   Stop-Agent
+#   L410   Start-Agent
+#   L412   Remove-RegistrySubKeyTreeSafe
+#   L423   Remove-ExplorerContextKeysSafe
+#   L434   Remove-ProtocolRegistrationSafe
+#   L436   Ensure-Shortcuts
+#   L467   Remove-ShortcutsSafe
+#   L487   Run-Install
+#   L509   Run-Test
+#   L584   Run-Uninstall
+#   L600   Run-Repair
+#   L601   Run-Doctor
+#   L602   Run-LabSmoke
 # ======================= END NAV INDEX =======================
 
 [CmdletBinding(SupportsShouldProcess=$true)]
@@ -51,6 +51,7 @@ param(
     [switch]$LabSmoke,
 
     [switch]$EnableAutoStart,
+    [switch]$DisableAutoStart,
     [switch]$StartAgentNow,
     [switch]$RestartAgent,
 
@@ -118,6 +119,7 @@ function Ensure-Admin { if (-not (Test-IsAdministrator)) { throw 'Run this scrip
 function Ensure-Mode {
     $selected = @($Install,$Uninstall,$Repair,$Test,$Doctor,$LabSmoke) | Where-Object { $_ }
     if ($selected.Count -ne 1) { throw 'Select exactly one mode: -Install, -Uninstall, -Repair, -Test, -Doctor, or -LabSmoke.' }
+    if ($EnableAutoStart -and $DisableAutoStart) { throw 'Select only one autostart option: -EnableAutoStart or -DisableAutoStart.' }
 }
 
 function Get-UserConfigPath { Join-Path (Join-Path $env:APPDATA 'MultiSend') 'config.json' }
@@ -139,34 +141,47 @@ function Test-AgentRunning { return [bool](Get-Process -Name 'multisend-agent' -
 function Get-AgentProcesses { @(Get-Process multisend-agent -ErrorAction SilentlyContinue | Sort-Object Id) }
 
 function Install-Binaries {
-    foreach ($name in @('multisend-agent.exe','multisend.exe','multirecv.exe','multisend-launcher.ps1','multisend-download-ui.ps1','multisend-settings-ui.ps1')) {
+    foreach ($name in @('install-multisend-node-v5.ps1','multisend-agent.exe','multisend.exe','multirecv.exe','multisend-launcher.ps1','multisend-download-ui.ps1','multisend-settings-ui.ps1')) {
         $src = Find-Binary -Name $name
         if (-not $src) { throw "CRITICAL: $name not found next to installer script." }
         $dst = Join-Path $Paths.BinRoot $name
+        $srcFull = [IO.Path]::GetFullPath($src)
+        $dstFull = [IO.Path]::GetFullPath($dst)
+        if ([string]::Equals($srcFull, $dstFull, [StringComparison]::OrdinalIgnoreCase)) { Write-Skip "Already running installed payload: $name"; continue }
         if ($PSCmdlet.ShouldProcess($dst,"Copy $name")) { Copy-Item $src $dst -Force; Write-Pass "Copied $name" }
     }
 }
 function Install-ExtensionFiles {
     $extSrc = Join-Path $ScriptRoot 'browser-extension'
-    if (-not (Test-Path -LiteralPath $extSrc)) { throw 'CRITICAL: browser-extension folder not found next to installer script.' }
+    if (-not (Test-Path -LiteralPath $extSrc) -and (Test-Path -LiteralPath $Paths.ExtensionRoot)) { $extSrc = $Paths.ExtensionRoot }
+    if (-not (Test-Path -LiteralPath $extSrc)) { throw 'CRITICAL: browser-extension payload not found.' }
     foreach ($name in $BrowserExtensionFiles) {
         $src = Join-Path $extSrc $name
         if (-not (Test-Path -LiteralPath $src)) { throw "CRITICAL: browser-extension file missing: $name" }
         $dst = Join-Path $Paths.ExtensionRoot $name
+        if ([string]::Equals([IO.Path]::GetFullPath($src), [IO.Path]::GetFullPath($dst), [StringComparison]::OrdinalIgnoreCase)) { Write-Skip "Browser extension already installed: $name"; continue }
         if ($PSCmdlet.ShouldProcess($dst,"Copy extension file $name")) { Copy-Item $src $dst -Force; Write-Pass "Copied browser extension file: $name" }
     }
 }
 
 function New-NodeConfig {
+    param([bool]$AutoStartEnabled)
     $cfgPath = Get-UserConfigPath
     $cfgDir = Split-Path -Parent $cfgPath
     if ($PSCmdlet.ShouldProcess($cfgDir,'Create user config dir')) { New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null; Write-Pass "User config path ready: $cfgDir" }
     $existing = $null
-    if (Test-Path $cfgPath) { try { $existing = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-WarnLine 'Existing config.json could not be parsed; a new config will be written.' } }
+    if (Test-Path $cfgPath) {
+        try { $existing = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch {
+            $backup = "$cfgPath.invalid-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Copy-Item -LiteralPath $cfgPath -Destination $backup -Force
+            Write-WarnLine "Existing config.json could not be parsed; preserved at $backup."
+        }
+    }
     $nodeID = if ($existing -and $existing.node_id) { [string]$existing.node_id } else { "$env:COMPUTERNAME-$([guid]::NewGuid().ToString('N').Substring(0,8))" }
     $name = if ($DisplayName) { $DisplayName } elseif ($existing -and $existing.display_name) { [string]$existing.display_name } else { $env:COMPUTERNAME }
     $receivePath = if ($ReceiveRoot) { $ReceiveRoot } elseif ($existing -and $existing.receive_path) { [string]$existing.receive_path } else { Get-DefaultReceiveRoot }
-    $cfg = [ordered]@{
+    $defaults = [ordered]@{
         schema_version = 1
         app_version = $AppVersion
         node_id = $nodeID
@@ -180,7 +195,7 @@ function New-NodeConfig {
         scheduler = 'auto'
         chunk_mode = 'auto'
         chunk_size_mb = 32
-        start_agent_on_login = [bool]$EnableAutoStart
+        start_agent_on_login = $AutoStartEnabled
         local_api_port = 56221
         transfer_port_range = @{ start = 56200; end = 56210 }
         discovery_port_range = @{ start = 56211; end = 56220 }
@@ -199,6 +214,18 @@ function New-NodeConfig {
         keep_manifests = $true
         cleanup_empty_download_dirs = $false
         pull_folder_result = 'zip'
+    }
+    if ($existing) {
+        $cfg = [ordered]@{}
+        foreach ($property in $existing.PSObject.Properties) { $cfg[$property.Name] = $property.Value }
+        $cfg['app_version'] = $AppVersion
+        $cfg['mode'] = 'node'
+        $cfg['display_name'] = $name
+        $cfg['receive_path'] = $receivePath
+        $cfg['start_agent_on_login'] = $AutoStartEnabled
+        Write-Pass 'Existing configuration values preserved for agent migration'
+    } else {
+        $cfg = $defaults
     }
     if ($PSCmdlet.ShouldProcess($cfgPath,'Write user config')) { Write-Utf8NoBomFile -Path $cfgPath -Value ($cfg | ConvertTo-Json -Depth 6); Write-Pass "User config written: $cfgPath" }
     if ($PSCmdlet.ShouldProcess($receivePath,'Create receive path')) { New-Item -ItemType Directory -Force -Path $receivePath | Out-Null; Write-Pass "Receive folder ready: $receivePath" }
@@ -270,11 +297,9 @@ function Set-AutoStart {
 
 function Ensure-ExplorerContext {
     $launcher = Join-Path $Paths.BinRoot 'multisend-launcher.ps1'
-    $downloadUi = Join-Path $Paths.BinRoot 'multisend-download-ui.ps1'
-    $settingsUi = Join-Path $Paths.BinRoot 'multisend-settings-ui.ps1'
     $sendCmd = 'powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -FilePath "%1"' -f $launcher
-    $downloadCmd = 'powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $downloadUi
-    $settingsCmd = 'powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $settingsUi
+    $downloadCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -OpenWebUI' -f $launcher
+    $settingsCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -OpenWebUI -View settings' -f $launcher
     $icon = Join-Path $Paths.BinRoot 'multisend-agent.exe'
     $createMenu = {
         param($root, [string]$baseKey, [string]$hiveLabel)
@@ -308,7 +333,7 @@ function Ensure-ExplorerContext {
             $recvKey.SetValue('MUIVerb', 'Receber com MultiSend', [Microsoft.Win32.RegistryValueKind]::String)
             $recvKey.SetValue('Icon', $icon, [Microsoft.Win32.RegistryValueKind]::String)
             $recvKey.Close()
-            $recvCmd = 'powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -ProtocolUrl "file://%1"' -f $downloadUi
+            $recvCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -OpenWebUI -ProtocolUrl "file://%1"' -f $launcher
             $recvCmdKey = $root.CreateSubKey("$baseKey\shell\receive\command")
             if ($recvCmdKey) { $recvCmdKey.SetValue('', $recvCmd, [Microsoft.Win32.RegistryValueKind]::String); $recvCmdKey.Close() }
         }
@@ -356,8 +381,8 @@ function Ensure-ExplorerContext {
 }
 
 function Ensure-ProtocolRegistration {
-    $downloadUi = Join-Path $Paths.BinRoot 'multisend-download-ui.ps1'
-    $cmd = 'powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -ProtocolUrl "%1"' -f $downloadUi
+    $launcher = Join-Path $Paths.BinRoot 'multisend-launcher.ps1'
+    $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -OpenWebUI -ProtocolUrl "%1"' -f $launcher
     $appId = 'MultiSend Download'
     $protocolKey = 'Software\Classes\multisend'
     $commandKey = 'Software\Classes\multisend\shell\open\command'
@@ -415,18 +440,17 @@ function Ensure-Shortcuts {
             $WshShell = New-Object -ComObject WScript.Shell
             $Shortcut = $WshShell.CreateShortcut($shortcutPath)
             $Shortcut.TargetPath = 'powershell.exe'
-            $downloadUi = Join-Path $Paths.BinRoot 'multisend-download-ui.ps1'
-            $Shortcut.Arguments = "-NoExit -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Normal -File `"$downloadUi`""
+            $launcher = Join-Path $Paths.BinRoot 'multisend-launcher.ps1'
+            $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`" -OpenWebUI"
             $Shortcut.IconLocation = "$(Join-Path $Paths.BinRoot 'multisend-agent.exe'),0"
-            $Shortcut.Description = 'MultiSend Downloads'
+            $Shortcut.Description = 'MultiSend'
             $Shortcut.Save()
             Write-Pass 'Start Menu shortcut created: MultiSend.lnk'
 
             $settingsShortcutPath = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\MultiSend Settings.lnk'
             $SettingsShortcut = $WshShell.CreateShortcut($settingsShortcutPath)
             $SettingsShortcut.TargetPath = 'powershell.exe'
-            $settingsUi = Join-Path $Paths.BinRoot 'multisend-settings-ui.ps1'
-            $SettingsShortcut.Arguments = "-NoExit -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Normal -File `"$settingsUi`""
+            $SettingsShortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`" -OpenWebUI -View settings"
             $SettingsShortcut.IconLocation = "$(Join-Path $Paths.BinRoot 'multisend-agent.exe'),0"
             $SettingsShortcut.Description = 'MultiSend Settings'
             $SettingsShortcut.Save()
@@ -462,19 +486,22 @@ function Remove-ShortcutsSafe {
 
 function Run-Install {
     Write-Section 'MultiSend install'
-    if (Test-AgentRunning) { Write-Step 'Stopping current agent before binary update'; Stop-Agent }
+    $agentWasRunning = Test-AgentRunning
+    if ($agentWasRunning) { Write-Step 'Stopping current agent before binary update'; Stop-Agent }
     Ensure-Directories
     $state = @{ schema_version = 1; app_version = $AppVersion; mode = 'node'; installed_at = (Get-Date).ToString('s'); applied_firewall_rules = @(); applied_registry_keys = @(); applied_run_values = @(); notes = @('node-mode install') }
     Write-Step 'Copying binaries'; Install-Binaries
     Write-Step 'Copying browser extension payload'; Install-ExtensionFiles
-    Write-Step 'Writing user configuration'; New-NodeConfig
+    $existingAutoStart = [bool](Get-ItemProperty -Path $Reg.MachineRunKey -Name $Reg.RunValueName -ErrorAction SilentlyContinue)
+    $autoStartEnabled = if ($EnableAutoStart) { $true } elseif ($DisableAutoStart) { $false } elseif ((Test-Path -LiteralPath $Paths.StateFile) -or (Test-Path -LiteralPath (Join-Path $Paths.BinRoot 'multisend-agent.exe'))) { $existingAutoStart } else { $false }
+    Write-Step 'Writing user configuration'; New-NodeConfig -AutoStartEnabled $autoStartEnabled
     Write-Step 'Configuring firewall rules'; $state.applied_firewall_rules = @(Ensure-Firewall)
-    Write-Step 'Configuring autostart'; $state.applied_run_values = @(Set-AutoStart -Enabled ([bool]$EnableAutoStart)); if (-not $EnableAutoStart) { $state.notes += 'autostart disabled by installer option'; Write-Skip 'Autostart not enabled. Use -EnableAutoStart to enable it.' }
+    Write-Step 'Configuring autostart'; $state.applied_run_values = @(Set-AutoStart -Enabled $autoStartEnabled); if (-not $autoStartEnabled) { $state.notes += 'autostart disabled'; Write-Skip 'Autostart is disabled. Use -EnableAutoStart to enable it.' }
     Write-Step 'Configuring Explorer context menu'; $k = Ensure-ExplorerContext; if ($k) { $state.applied_registry_keys += $k }
     Write-Step 'Registering multisend protocol'; $pk = Ensure-ProtocolRegistration; if ($pk) { $state.applied_registry_keys += $pk }
     Write-Step 'Creating shortcuts'; $sk = Ensure-Shortcuts; if ($sk) { $state.applied_shortcuts += $sk }
     Write-Step 'Saving install state'; Save-State -State $state
-    if ($RestartAgent) { Write-Step 'Starting agent (restart mode)'; Start-Agent }
+    if ($RestartAgent -or ($Repair -and $agentWasRunning)) { Write-Step 'Starting agent (restart mode)'; Start-Agent }
     elseif ($StartAgentNow) { Write-Step 'Starting agent'; Start-Agent } else { Write-Skip 'Agent not started. Use -StartAgentNow to start it after install.' }
     Write-Log -Level 'INFO' -Message 'Install completed (node mode).'
 }
@@ -485,10 +512,18 @@ function Run-Test {
     $errors = @(); $warnings = @()
     foreach ($path in @($Paths.BinRoot,$Paths.ExtensionRoot)) { if (Test-Path $path) { Write-Pass "Installed path: $path" } else { Write-WarnLine "Not installed yet: $path"; $warnings += "Missing path: $path" } }
     $userCfgRoot = Join-Path $env:APPDATA 'MultiSend'; if (Test-Path $userCfgRoot) { Write-Pass "User config path: $userCfgRoot" } else { Write-WarnLine "User config path not created yet: $userCfgRoot"; $warnings += "Missing path: $userCfgRoot" }
-    foreach ($f in @('multisend-agent.exe','multisend.exe','multirecv.exe','multisend-launcher.ps1','multisend-download-ui.ps1','multisend-settings-ui.ps1')) {
+    foreach ($f in @('install-multisend-node-v5.ps1','multisend-agent.exe','multisend.exe','multirecv.exe','multisend-launcher.ps1','multisend-download-ui.ps1','multisend-settings-ui.ps1')) {
         $installed = Join-Path $Paths.BinRoot $f
         $source = Join-Path $ScriptRoot $f
-        if (Test-Path $installed) { Write-Pass "Installed file: $f" }
+        if (Test-Path $installed) {
+            Write-Pass "Installed file: $f"
+            if (Test-Path $source) {
+                $installedHash = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash
+                $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+                if ($installedHash -eq $sourceHash) { Write-Pass "Installed payload matches source: $f" }
+                else { Write-Check 'FAIL' "Installed payload differs from source: $f"; $errors += "Payload mismatch: $f" }
+            }
+        }
         elseif (Test-Path $source) { Write-WarnLine "Source exists but not installed: $f" }
         else { Write-Check 'FAIL' "Missing source/installed file: $f"; $errors += "Missing file: $f" }
     }
@@ -501,7 +536,32 @@ function Run-Test {
     }
     $cfgPath = Get-UserConfigPath
     if (Test-Path $cfgPath) { try { $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if ($cfg.node_id) { Write-Pass 'config.json node_id present' } else { Write-WarnLine 'node_id missing in config.json'; $warnings += 'node_id missing in config.json' } } catch { Write-Check 'FAIL' 'config.json parse failed'; $errors += 'config.json parse failed' } } else { Write-WarnLine 'config.json not found yet'; $warnings += 'config.json not found' }
-    if ($IsAdmin) { foreach ($rule in $FirewallRules) { if (Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue) { Write-Pass "Firewall rule found: $rule" } else { Write-WarnLine "Firewall rule not found: $rule"; $warnings += "Firewall rule not found: $rule" } } } else { Write-WarnLine 'Firewall check limited: run elevated for full validation.'; $warnings += 'Firewall check limited.' }
+    if ($IsAdmin) {
+        $expectedFirewall = @(
+            @{ Name=$FirewallRules[0]; Protocol='TCP'; Port='56200-56210' },
+            @{ Name=$FirewallRules[1]; Protocol='UDP'; Port='56211-56220' },
+            @{ Name=$FirewallRules[2]; Protocol='TCP'; Port='56231-56240' }
+        )
+        $expectedAgent = Join-Path $Paths.BinRoot 'multisend-agent.exe'
+        foreach ($expected in $expectedFirewall) {
+            $rule = Get-NetFirewallRule -DisplayName $expected.Name -ErrorAction SilentlyContinue
+            if (-not $rule) { Write-Check 'FAIL' "Firewall rule not found: $($expected.Name)"; $errors += "Firewall rule not found: $($expected.Name)"; continue }
+            $port = $rule | Get-NetFirewallPortFilter
+            $address = $rule | Get-NetFirewallAddressFilter
+            $application = $rule | Get-NetFirewallApplicationFilter
+            $profile = [string]$rule.Profile
+            $valid = [bool]$rule.Enabled -and
+                ([string]$rule.Direction -eq 'Inbound') -and
+                ([string]$rule.Action -eq 'Allow') -and
+                ([string]$port.Protocol -eq $expected.Protocol) -and
+                ([string]$port.LocalPort -eq $expected.Port) -and
+                ([string]$address.RemoteAddress -eq 'LocalSubnet') -and
+                ($profile -match 'Domain') -and ($profile -match 'Private') -and ($profile -notmatch 'Public') -and
+                ([string]::Equals([string]$application.Program, $expectedAgent, [StringComparison]::OrdinalIgnoreCase))
+            if ($valid) { Write-Pass "Firewall rule constrained correctly: $($expected.Name)" }
+            else { Write-Check 'FAIL' "Firewall rule has unsafe or unexpected filters: $($expected.Name)"; $errors += "Firewall filters invalid: $($expected.Name)" }
+        }
+    } else { Write-WarnLine 'Firewall check limited: run elevated for full validation.'; $warnings += 'Firewall check limited.' }
     if (Get-ItemProperty -Path $Reg.MachineRunKey -Name $Reg.RunValueName -ErrorAction SilentlyContinue) { Write-Pass 'Machine autostart found' } else { Write-Skip 'Machine autostart not enabled' }
     $hasExplorer = (Get-Item -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\Software\Classes\*\shell\MultiSend' -ErrorAction SilentlyContinue) -or (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\*\shell\MultiSend' -ErrorAction SilentlyContinue) -or (Get-Item -LiteralPath 'Registry::HKEY_CLASSES_ROOT\*\shell\MultiSend' -ErrorAction SilentlyContinue)
     if ($hasExplorer) { Write-Pass 'Explorer context menu found' } else { Write-WarnLine 'Explorer context menu not found'; $warnings += 'Explorer context menu not found.' }

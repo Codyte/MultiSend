@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>MultiSend</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Ir para o conteúdo</a>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <div>
+        <p class="eyebrow">Transferências locais</p>
+        <h1>MultiSend</h1>
+      </div>
+    </div>
+    <div class="header-actions">
+      <nav class="view-switch" aria-label="Seções da aplicação">
+        <button class="view-tab active" type="button" data-view-target="dashboard" aria-pressed="true">Painel</button>
+        <button class="view-tab" type="button" data-view-target="settings" aria-pressed="false">Configurações</button>
+      </nav>
+      <span id="agent-status" class="connection pending" role="status" aria-live="polite">
+        <span class="connection-dot" aria-hidden="true"></span>
+        Conectando
+      </span>
+      <button id="refresh-button" class="button secondary" type="button">Atualizar</button>
+    </div>
+  </header>
+
+  <main id="main" class="shell">
+    <section id="error-banner" class="notice error" role="alert" hidden></section>
+
+    <div id="dashboard-view" class="app-view" data-view="dashboard">
+    <section class="summary-grid" aria-label="Resumo">
+      <article class="metric-card accent">
+        <span class="metric-label">Operações ativas</span>
+        <strong id="active-count" class="metric-value">—</strong>
+        <span class="metric-detail">downloads, envios e recebimentos</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Velocidade atual</span>
+        <strong id="current-speed" class="metric-value">—</strong>
+        <span class="metric-detail">soma das operações locais</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Computadores disponíveis</span>
+        <strong id="peer-count" class="metric-value">—</strong>
+        <span class="metric-detail">descobertos na rede</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Interfaces utilizáveis</span>
+        <strong id="interface-count" class="metric-value">—</strong>
+        <span class="metric-detail">Ethernet, Wi-Fi e adaptadores</span>
+      </article>
+    </section>
+
+    <div class="content-grid">
+      <section class="panel start-panel" aria-labelledby="new-operation-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Nova operação</p>
+            <h2 id="new-operation-title">Transferir arquivo</h2>
+          </div>
+        </div>
+        <div class="operation-switch" role="tablist" aria-label="Tipo de operação">
+          <button class="operation-tab active" type="button" role="tab" data-operation-target="download" aria-selected="true">Download</button>
+          <button class="operation-tab" type="button" role="tab" data-operation-target="send" aria-selected="false">Enviar</button>
+          <button class="operation-tab" type="button" role="tab" data-operation-target="pull" aria-selected="false">Receber</button>
+        </div>
+        <form id="download-form" class="operation-form" data-operation-form="download" novalidate>
+          <label class="field full">
+            <span>URL HTTP ou HTTPS</span>
+            <input id="download-url" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://servidor/arquivo.zip" required>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span>Pasta de saída <small>(opcional)</small></span>
+              <input name="output_dir" type="text" autocomplete="off" placeholder="Usar pasta padrão">
+            </label>
+            <label class="field">
+              <span>Nome do arquivo <small>(opcional)</small></span>
+              <input name="file_name" type="text" autocomplete="off" placeholder="Detectar pela URL">
+            </label>
+          </div>
+          <label class="field compact">
+            <span>Chunk em MB <small>(opcional)</small></span>
+            <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
+          </label>
+          <p id="form-error" class="field-error" role="alert" hidden></p>
+          <div class="form-actions">
+            <button id="download-submit" class="button primary" type="submit">Iniciar download</button>
+            <span class="form-hint">O agente continua trabalhando se esta página for fechada.</span>
+          </div>
+        </form>
+        <form id="send-form" class="operation-form" data-operation-form="send" novalidate hidden>
+          <label class="field full">
+            <span>Caminho absoluto do arquivo</span>
+            <input id="send-path" name="file_path" type="text" autocomplete="off" placeholder="C:\Arquivos\relatorio.zip" required>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span>Computador de destino</span>
+              <select id="send-peer" name="peer_node_id">
+                <option value="">Selecione um computador</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Endereço manual <small>(opcional)</small></span>
+              <input name="peer_address" type="text" autocomplete="off" placeholder="192.168.1.20:56200">
+            </label>
+          </div>
+          <label class="field compact">
+            <span>Chunk em MB <small>(opcional)</small></span>
+            <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
+          </label>
+          <p id="send-error" class="field-error" role="alert" hidden></p>
+          <div class="form-actions">
+            <button id="send-submit" class="button primary" type="submit">Iniciar envio</button>
+            <span class="form-hint">Para escolher pelo Explorer, use o menu “Enviar com MultiSend”.</span>
+          </div>
+        </form>
+        <form id="pull-form" class="operation-form" data-operation-form="pull" novalidate hidden>
+          <label class="field full">
+            <span>Origem remota</span>
+            <input id="pull-source" name="source_url" type="text" autocomplete="off" placeholder="file://COMPUTADOR/Compartilhamento/arquivo.zip" required>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span>Pasta local de saída <small>(opcional)</small></span>
+              <input name="output_dir" type="text" autocomplete="off" placeholder="Usar pasta padrão">
+            </label>
+            <label class="field">
+              <span>Chunk em MB <small>(opcional)</small></span>
+              <input name="chunk_size_mb" type="number" min="1" max="1024" step="1" placeholder="Automático">
+            </label>
+          </div>
+          <p id="pull-error" class="field-error" role="alert" hidden></p>
+          <div class="form-actions">
+            <button id="pull-submit" class="button primary" type="submit">Iniciar recebimento</button>
+            <span class="form-hint">A origem deve ser um caminho UNC ou URL <code>file://</code> acessível.</span>
+          </div>
+        </form>
+      </section>
+
+      <aside class="panel network-panel" aria-labelledby="network-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Rede local</p>
+            <h2 id="network-title">Conectividade</h2>
+          </div>
+        </div>
+        <div id="network-content" class="network-content" aria-live="polite">
+          <div class="skeleton line"></div>
+          <div class="skeleton line short"></div>
+        </div>
+      </aside>
+    </div>
+
+    <section class="panel operations-panel" aria-labelledby="operations-title">
+      <div class="panel-heading operations-heading">
+        <div>
+          <p class="eyebrow">Atividade</p>
+          <h2 id="operations-title">Transferências</h2>
+        </div>
+        <div class="filters" aria-label="Filtrar operações">
+          <button class="filter active" type="button" data-filter="all" aria-pressed="true">Todas</button>
+          <button class="filter" type="button" data-filter="active" aria-pressed="false">Ativas</button>
+          <button class="filter" type="button" data-filter="finished" aria-pressed="false">Finalizadas</button>
+        </div>
+      </div>
+      <div id="operations-list" class="operations-list" aria-live="polite" aria-busy="true">
+        <article class="operation-card loading-card"><div class="skeleton line"></div><div class="skeleton line short"></div></article>
+        <article class="operation-card loading-card"><div class="skeleton line"></div><div class="skeleton line short"></div></article>
+      </div>
+    </section>
+    </div>
+
+    <section id="settings-view" class="app-view settings-view" data-view="settings" aria-labelledby="settings-title" hidden>
+      <div class="settings-intro">
+        <div>
+          <p class="eyebrow">Agente local</p>
+          <h2 id="settings-title">Configurações</h2>
+          <p class="settings-description">Os valores são validados e gravados pelo agente. Segredos nunca são enviados ao navegador.</p>
+        </div>
+        <div id="runtime-summary" class="runtime-summary" aria-live="polite">Carregando configuração…</div>
+      </div>
+
+      <form id="settings-form" novalidate>
+        <div class="settings-grid">
+          <section class="panel settings-card" aria-labelledby="general-settings-title">
+            <div class="panel-heading">
+              <p class="eyebrow">Identidade e arquivos</p>
+              <h3 id="general-settings-title">Geral</h3>
+            </div>
+            <label class="field">
+              <span>Nome exibido</span>
+              <input name="display_name" type="text" maxlength="128" required autocomplete="off">
+            </label>
+            <label class="field">
+              <span>Pasta de recebimento</span>
+              <input name="receive_path" type="text" required autocomplete="off">
+            </label>
+            <label class="field">
+              <span>Resultado ao receber uma pasta</span>
+              <select name="pull_folder_result">
+                <option value="zip">Manter como ZIP</option>
+                <option value="extract">Extrair automaticamente</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="panel settings-card" aria-labelledby="interface-settings-title">
+            <div class="panel-heading">
+              <p class="eyebrow">Conectividade</p>
+              <h3 id="interface-settings-title">Interfaces</h3>
+            </div>
+            <div class="form-row">
+              <label class="field">
+                <span>Política</span>
+                <select name="interface_policy">
+                  <option value="auto">Automática</option>
+                  <option value="manual">Manual</option>
+                  <option value="all">Todas permitidas</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Atualização em segundos</span>
+                <input name="interface_refresh_seconds" type="number" min="2" max="60" step="1" required>
+              </label>
+            </div>
+            <div class="toggle-list">
+              <label class="toggle"><input name="allow_new_interfaces_during_transfer" type="checkbox"><span>Adicionar novas interfaces durante a transferência</span></label>
+              <label class="toggle"><input name="ignore_virtual_interfaces" type="checkbox"><span>Ignorar interfaces virtuais</span></label>
+              <label class="toggle"><input name="ignore_vpn_interfaces" type="checkbox"><span>Ignorar interfaces VPN</span></label>
+              <label class="toggle"><input name="ignore_link_local" type="checkbox"><span>Ignorar endereços link-local</span></label>
+            </div>
+          </section>
+
+          <section class="panel settings-card" aria-labelledby="interface-lists-title">
+            <div class="panel-heading">
+              <p class="eyebrow">Uma entrada por linha</p>
+              <h3 id="interface-lists-title">Listas de interfaces</h3>
+            </div>
+            <label class="field">
+              <span>Tipos permitidos</span>
+              <textarea name="allowed_interface_types" rows="4" spellcheck="false"></textarea>
+            </label>
+            <div class="form-row">
+              <label class="field">
+                <span>Interfaces manuais</span>
+                <textarea name="manual_interfaces" rows="5" spellcheck="false"></textarea>
+              </label>
+              <label class="field">
+                <span>Interfaces ignoradas</span>
+                <textarea name="ignored_interfaces" rows="5" spellcheck="false"></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel settings-card" aria-labelledby="security-settings-title">
+            <div class="panel-heading">
+              <p class="eyebrow">Limites de confiança</p>
+              <h3 id="security-settings-title">Segurança</h3>
+            </div>
+            <label class="toggle important"><input name="require_auth" type="checkbox"><span>Exigir autenticação entre nós</span></label>
+            <p id="secret-status" class="settings-note">Verificando segredo do nó…</p>
+            <label class="field">
+              <span>Raízes que peers podem solicitar</span>
+              <textarea name="remote_send_roots" rows="6" spellcheck="false" placeholder="Vazio: somente a pasta de recebimento"></textarea>
+            </label>
+            <p class="settings-note">As pastas devem existir. Raízes de volume, como <code>C:\</code>, são recusadas.</p>
+          </section>
+
+          <section class="panel settings-card" aria-labelledby="cleanup-settings-title">
+            <div class="panel-heading">
+              <p class="eyebrow">Pós-transferência</p>
+              <h3 id="cleanup-settings-title">Limpeza</h3>
+            </div>
+            <div class="toggle-list">
+              <label class="toggle"><input name="cleanup_completed_chunks" type="checkbox"><span>Remover chunks após concluir</span></label>
+              <label class="toggle"><input name="keep_manifests" type="checkbox"><span>Manter manifests</span></label>
+              <label class="toggle"><input name="cleanup_empty_download_dirs" type="checkbox"><span>Remover pastas vazias de download</span></label>
+            </div>
+          </section>
+
+          <section class="panel settings-card" aria-labelledby="pipeline-settings-title">
+            <div class="panel-heading">
+              <p class="eyebrow">Ajuste avançado</p>
+              <h3 id="pipeline-settings-title">Pipeline de download</h3>
+            </div>
+            <div class="form-row">
+              <label class="field">
+                <span>Modo</span>
+                <select name="download_pipeline_mode">
+                  <option value="pipelined">Pipelined</option>
+                  <option value="legacy">Legacy</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Operações por interface</span>
+                <input name="download_in_flight_per_channel" type="number" min="1" max="16" step="1" required>
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="field">
+                <span>Estratégia</span>
+                <select name="download_channel_strategy">
+                  <option value="dynamic">Dinâmica</option>
+                  <option value="strict_split">Divisão fixa</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Percentual Ethernet</span>
+                <input name="download_split_cable_pct" type="number" min="1" max="99" step="1" required>
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <section class="settings-savebar" aria-label="Salvar configuração">
+          <div>
+            <strong id="settings-state">Nenhuma alteração pendente</strong>
+            <span id="settings-message">Alterações passam a valer completamente após reiniciar o agente.</span>
+          </div>
+          <button id="settings-save" class="button primary" type="submit">Salvar configuração</button>
+        </section>
+      </form>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span id="last-updated">Aguardando primeira atualização</span>
+    <span>API local protegida · interface incorporada ao agente</span>
+  </footer>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

@@ -11,11 +11,13 @@ Use this before switching the GitHub repository visibility to public.
 - [ ] Decide whether release binaries should remain in Git or move to GitHub Releases.
 - [ ] Remove old installer backups from Git history if repository size matters.
 - [ ] Confirm `.gitignore` covers local logs, scratch files, DBs, and tool configs.
-- [ ] Confirm optional external APIs are documented and disabled by default.
-- [ ] Run `go test ./...` from `MultiSend`.
+- [ ] Run `go test ./...` from the repository root.
+- [ ] Run `go vet ./...` and review `docs/QUALITY_AUDIT.md`.
+- [ ] Confirm compatibility UI wrappers open the embedded web UI and contain no download WinForms.
 - [ ] Rebuild installer from a clean checkout.
 - [ ] Test install/uninstall on a non-development Windows machine.
 - [ ] Run `--doctor`, `--lab-smoke`, and `--download-smoke`.
+- [ ] Confirm both smokes report `artifact cleanup: PASS` and leave no `run-*` directory.
 - [ ] Run manual LAN tests on two PCs for send, pull file, pull folder zip, and pull folder extract.
 
 ## Recommended
@@ -28,6 +30,6 @@ Use this before switching the GitHub repository visibility to public.
 
 ## Known Public-Readiness Notes
 
-- `OPENAI_API_KEY` is referenced only as an environment variable in the memory package; no key is committed, and API use requires `MULTISEND_ENABLE_OPENAI_EMBEDDINGS=true`.
+- The current product has no runtime dependency on paid or external APIs.
 - Historical binaries may still exist in Git history even if removed from the current tree.
 - Current public target is `Codyte/MultiSend`.

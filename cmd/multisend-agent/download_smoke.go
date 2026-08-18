@@ -1,5 +1,14 @@
 package main
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L27    runDownloadSmoke
+//   L277   toFloat
+//   L290   toInt
+//   L304   printDownloadFailedChunks
+//   L314   printDownloadManifestErrors
+// ======================= END NAV INDEX =======================
+
 import (
 	"encoding/json"
 	"fmt"
@@ -12,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"lab/multinet/internal/config"
+	"github.com/Codyte/MultiSend/internal/config"
 )
 
 func runDownloadSmoke() int {
@@ -37,10 +46,21 @@ func runDownloadSmoke() int {
 		return 1
 	}
 	base := filepath.Join(cfg.ReceivePath, "_lab", "download")
-	srcDir := filepath.Join(base, "src")
-	outDir := filepath.Join(base, "out")
+	runsRoot := filepath.Join(base, "runs")
+	runDir := filepath.Join(runsRoot, fmt.Sprintf("run-%d", time.Now().UnixNano()))
+	srcDir := filepath.Join(runDir, "src")
+	outDir := filepath.Join(runDir, "out")
 	_ = os.MkdirAll(srcDir, 0o755)
 	_ = os.MkdirAll(outDir, 0o755)
+	id := ""
+	cleanupPending := true
+	defer func() {
+		if cleanupPending {
+			if err := cleanupDownloadSmokeArtifacts(api, id, runDir, runsRoot); err != nil {
+				fmt.Println("WARN: best-effort download cleanup:", err)
+			}
+		}
+	}()
 	src := filepath.Join(srcDir, "download-test.bin")
 	const size = 256 * 1024 * 1024
 	if _, err := ensureDeterministicFile(src, size); err != nil {
@@ -111,9 +131,11 @@ func runDownloadSmoke() int {
 		fmt.Println("FAIL start:", err)
 		return 1
 	}
-	id, _ := created["id"].(string)
+	id, _ = created["id"].(string)
 	if id == "" {
+		cleanupPending = false
 		fmt.Println("FAIL: no download id")
+		fmt.Println("run artifacts preserved because an active download could not be identified:", runDir)
 		return 1
 	}
 	canceled := false
@@ -240,7 +262,14 @@ func runDownloadSmoke() int {
 		fmt.Println("FAIL: output size mismatch")
 		return 1
 	}
+	if err := cleanupDownloadSmokeArtifacts(api, id, runDir, runsRoot); err != nil {
+		cleanupPending = false
+		fmt.Println("FAIL: artifact cleanup:", err)
+		return 1
+	}
+	cleanupPending = false
 	fmt.Println("=== MultiSend Download Smoke ===")
+	fmt.Println("artifact cleanup: PASS")
 	fmt.Println("result: PASS")
 	return 0
 }

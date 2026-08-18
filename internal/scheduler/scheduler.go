@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"lab/multinet/internal/manifest"
+	"github.com/Codyte/MultiSend/internal/manifest"
 )
 
 type Channel struct {

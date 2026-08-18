@@ -1,7 +1,25 @@
 package main
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L39    type progressReader
+//   L44    progressReader.Read
+//   L52    main
+//   L197   sendPart
+//   L241   hashSection
+//   L249   renderProgress
+//   L336   bar
+//   L352   percent
+//   L359   humanBytes
+//   L377   parseRatio
+//   L396   exitf
+//   L401   clearScreen
+// ======================= END NAV INDEX =======================
+
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -14,8 +32,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"lab/multinet/internal/proto"
-	"lab/multinet/internal/split"
+	"github.com/Codyte/MultiSend/internal/proto"
+	"github.com/Codyte/MultiSend/internal/split"
 )
 
 type progressReader struct {
@@ -65,6 +83,16 @@ func main() {
 	}
 
 	base := filepath.Base(*filePath)
+	transferID := fmt.Sprintf("tx-%d", time.Now().UnixNano())
+	cableHash, err := hashSection(f, 0, aSize)
+	if err != nil {
+		exitf("hash cable part: %v", err)
+	}
+	wifiHash, err := hashSection(f, aSize, bSize)
+	if err != nil {
+		exitf("hash wifi part: %v", err)
+	}
+	secret := []byte(os.Getenv("MULTISEND_NODE_SECRET"))
 
 	var sentCable int64
 	var sentWifi int64
@@ -99,16 +127,23 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		header := proto.Header{
+			TransferID:  transferID,
+			FileName:    base,
+			PartIndex:   1,
+			TotalParts:  2,
+			PartSize:    aSize,
+			ChunkIndex:  0,
+			Offset:      0,
+			TotalBytes:  st.Size(),
+			ChunkSHA256: cableHash,
+		}
+		proto.SignHeader(&header, secret)
 		err := sendPart(
 			ctx,
 			*server,
 			*cableIP,
-			proto.Header{
-				FileName:   base,
-				PartIndex:  1,
-				TotalParts: 2,
-				PartSize:   aSize,
-			},
+			header,
 			part1,
 		)
 		if err != nil {
@@ -120,16 +155,23 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		header := proto.Header{
+			TransferID:  transferID,
+			FileName:    base,
+			PartIndex:   2,
+			TotalParts:  2,
+			PartSize:    bSize,
+			ChunkIndex:  1,
+			Offset:      aSize,
+			TotalBytes:  st.Size(),
+			ChunkSHA256: wifiHash,
+		}
+		proto.SignHeader(&header, secret)
 		err := sendPart(
 			ctx,
 			*server,
 			*wifiIP,
-			proto.Header{
-				FileName:   base,
-				PartIndex:  2,
-				TotalParts: 2,
-				PartSize:   bSize,
-			},
+			header,
 			part2,
 		)
 		if err != nil {
@@ -179,8 +221,29 @@ func sendPart(ctx context.Context, server, localIP string, h proto.Header, r io.
 		return err
 	}
 
-	_, err = io.Copy(conn, r)
-	return err
+	n, err := io.Copy(conn, r)
+	if err != nil {
+		return err
+	}
+	if n != h.PartSize {
+		return fmt.Errorf("sent %d bytes, want %d", n, h.PartSize)
+	}
+	ack, err := proto.ReadChunkAck(conn)
+	if err != nil {
+		return fmt.Errorf("read ack: %w", err)
+	}
+	if ack.Status != "done" || ack.TransferID != h.TransferID || ack.ChunkIndex != h.ChunkIndex || ack.BytesReceived != h.PartSize {
+		return fmt.Errorf("receiver rejected chunk %d: status=%s bytes=%d error=%s", h.ChunkIndex, ack.Status, ack.BytesReceived, ack.Error)
+	}
+	return nil
+}
+
+func hashSection(file *os.File, offset, size int64) (string, error) {
+	h := sha256.New()
+	if _, err := io.CopyN(h, io.NewSectionReader(file, offset, size), size); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func renderProgress(done <-chan struct{}, cable, wifi *int64, cableTotal, wifiTotal int64) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"lab/multinet/internal/config"
+	"github.com/Codyte/MultiSend/internal/config"
 )
 
 type InterfaceInfo struct {

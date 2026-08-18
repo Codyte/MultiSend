@@ -1,9 +1,9 @@
-MultiSend/v4/V4.rar
-MultiSend/v3/V3.rar
-MultiSend/v2/V2.rar
-MultiSend/v1/V1.rar
-MultiSend/v5/v5.rar
-MultiSend/v*/
+/v4/V4.rar
+/v3/V3.rar
+/v2/V2.rar
+/v1/V1.rar
+/v5/v5.rar
+/v*/
 # Added by code-review-graph
 .code-review-graph/
 .navindex-cache.json
@@ -12,6 +12,7 @@ MultiSend/v*/
 .claude/
 .kiro/
 .guia/
+.handoff/
 .mcp.json
 .opencode.json
 .cursorrules
@@ -24,21 +25,21 @@ GEMINI.md
 tmp-*.ps1
 ruvector.db
 *.log
-MultiSend/_dyn_*.log
-MultiSend/req.json
-MultiSend/test_*.ps1
-MultiSend/patch_ui*.py
+/_dyn_*.log
+/req.json
+/test_*.ps1
+/patch_ui*.py
 
 # Build archives and generated installer outputs
-MultiSend/*.exe
-MultiSend/dist/*
-!MultiSend/dist/
-!MultiSend/dist/MultiSendSetup.iss
+/*.exe
+/dist/*
+!/dist/
+!/dist/MultiSendSetup.iss
 
 # Runtime/user data
-MultiSend/**/*.tmp
-MultiSend/**/*.bak
-MultiSend/**/*.cache
+*.tmp
+*.bak
+*.cache
 
 # Secrets and local environment
 .env

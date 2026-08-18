@@ -4,12 +4,12 @@ import "testing"
 
 func TestComputeParts(t *testing.T) {
 	tests := []struct {
-		name       string
-		total      int64
-		leftWeight int64
+		name        string
+		total       int64
+		leftWeight  int64
 		rightWeight int64
-		wantA      int64
-		wantB      int64
+		wantA       int64
+		wantB       int64
 	}{
 		{"2to1", 1000, 2, 1, 666, 334},
 		{"equal", 9, 1, 1, 4, 5},

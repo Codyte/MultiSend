@@ -1,5 +1,35 @@
 package discovery
 
+// ====================== BEGIN NAV INDEX ======================
+// NAV INDEX — auto-generated symbol map (refresh via the navindex skill)
+//   L53    type Hello
+//   L65    type Peer
+//   L71    type Manager
+//   L86    NewManager
+//   L109   Manager.Start
+//   L116   Manager.Peers
+//   L141   Manager.announceLoop
+//   L155   Manager.helloPayload
+//   L174   Manager.sendHelloMulticast
+//   L191   Manager.sendHelloBroadcast
+//   L212   Manager.listenMulticastLoop
+//   L240   Manager.listenAnyLoop
+//   L267   Manager.handlePacket
+//   L289   Manager.hasFreshRealPeerForAddr
+//   L301   itoa
+//   L324   Manager.broadcastTargets
+//   L371   shouldIgnoreInterfaceName
+//   L382   Manager.probeLoop
+//   L398   Manager.nextProbeInterval
+//   L414   Manager.runProbeCycle
+//   L454   Manager.localIPv4Nets
+//   L492   Manager.wasProbedRecently
+//   L499   Manager.markProbed
+//   L505   Manager.upsertProbePeer
+//   L534   candidateIPsFromARP
+//   L575   belongsToAnyNet
+// ======================= END NAV INDEX =======================
+
 import (
 	"bufio"
 	"context"
@@ -13,6 +43,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Codyte/MultiSend/internal/ports"
 )
 
 const multicastAddr = "239.255.42.99"
@@ -96,7 +128,13 @@ func (m *Manager) Peers() []Peer {
 		}
 		out = append(out, p)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(out, func(i, j int) bool {
+		left, right := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name)
+		if left == right {
+			return out[i].NodeID < out[j].NodeID
+		}
+		return left < right
+	})
 	return out
 }
 
@@ -227,11 +265,19 @@ func (m *Manager) listenAnyLoop(ctx context.Context) {
 }
 
 func (m *Manager) handlePacket(packet []byte, addr *net.UDPAddr) {
+	if addr == nil || addr.IP == nil {
+		return
+	}
 	var h Hello
 	if err := json.Unmarshal(packet, &h); err != nil {
 		return
 	}
 	if h.Type != "MULTISEND_HELLO" || h.NodeID == "" || h.NodeID == m.nodeID {
+		return
+	}
+	if !ports.IsValidPort(h.TransferPort) ||
+		(h.DiscoveryPort != 0 && !ports.IsValidPort(h.DiscoveryPort)) ||
+		(h.ControlPort != 0 && !ports.IsValidPort(h.ControlPort)) {
 		return
 	}
 	p := Peer{Hello: h, Addr: addr.IP.String(), LastSeen: time.Now()}

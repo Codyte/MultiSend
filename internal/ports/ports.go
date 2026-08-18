@@ -80,7 +80,11 @@ func IsPortAvailableUDP(host string, port int) bool {
 }
 
 func PickTCP(host string, rg Range) (int, error) {
-	rg = rg.Normalize()
+	var err error
+	rg, err = normalizeValidRange(rg)
+	if err != nil {
+		return 0, err
+	}
 	ex := WindowsExcludedTCPRanges()
 	for p := rg.Start; p <= rg.End; p++ {
 		if IsExcluded(p, ex) {
@@ -94,7 +98,11 @@ func PickTCP(host string, rg Range) (int, error) {
 }
 
 func PickUDP(host string, rg Range) (int, error) {
-	rg = rg.Normalize()
+	var err error
+	rg, err = normalizeValidRange(rg)
+	if err != nil {
+		return 0, err
+	}
 	ex := WindowsExcludedUDPRanges()
 	for p := rg.Start; p <= rg.End; p++ {
 		if IsExcluded(p, ex) {
@@ -105,6 +113,14 @@ func PickUDP(host string, rg Range) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no available udp port in range %d-%d", rg.Start, rg.End)
+}
+
+func normalizeValidRange(rg Range) (Range, error) {
+	rg = rg.Normalize()
+	if !IsValidPort(rg.Start) || !IsValidPort(rg.End) {
+		return Range{}, fmt.Errorf("invalid port range %d-%d", rg.Start, rg.End)
+	}
+	return rg, nil
 }
 
 func IsExcluded(port int, ranges []Range) bool {
